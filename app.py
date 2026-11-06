@@ -18,9 +18,7 @@ def get_connection():
 def init_db():
     conn = get_connection()
     c = conn.cursor()
-    # Tabella Utenti
     c.execute("CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password_hash TEXT)")
-    # Tabella Preventivi
     c.execute("""
         CREATE TABLE IF NOT EXISTS preventivi (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -29,16 +27,11 @@ def init_db():
             stato TEXT DEFAULT 'Attivo'
         )
     """)
-    # Tabella Operai
     c.execute("CREATE TABLE IF NOT EXISTS operai (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, ruolo TEXT, costo_orario REAL)")
-    # Tabella Fornitori
     c.execute("CREATE TABLE IF NOT EXISTS fornitori (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, piva TEXT, contatto TEXT)")
-    # Tabella Costi Manodopera
     c.execute("CREATE TABLE IF NOT EXISTS costo_manodopera (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, operaio TEXT, ore REAL, costo_orario REAL, totale REAL)")
-    # Tabella Costi Materiali
     c.execute("CREATE TABLE IF NOT EXISTS costo_materiali (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, fornitore TEXT, documento TEXT, imponibile REAL, iva REAL, totale REAL)")
     
-    # Creazione utente admin
     c.execute("SELECT * FROM users WHERE username = 'admin'")
     if not c.fetchone():
         hashed_pw = hashlib.sha256("Cantieri2024!".encode()).hexdigest()
@@ -213,26 +206,30 @@ def page_costi():
     tab1, tab2 = st.tabs(["Costo Manodopera", "Costo Materiale"])
     
     with tab1:
-        with st.form("form_manodopera", clear_on_submit=True):
-            st.subheader("Registra Ore Lavorate")
-            col1, col2 = st.columns(2)
-            data_m = col1.date_input("Data", datetime.date.today())
-            cantiere_m = col2.selectbox("Cantiere", cantieri['id'].tolist(), format_func=lambda x: cantieri[cantieri['id']==x]['indirizzo'].values[0])
+        # Usciamo dal form per permettere l'aggiornamento dinamico del costo orario
+        st.subheader("Registra Ore Lavorate")
+        col1, col2 = st.columns(2)
+        data_m = col1.date_input("Data", datetime.date.today())
+        cantiere_m = col2.selectbox("Cantiere", cantieri['id'].tolist(), format_func=lambda x: cantieri[cantieri['id']==x]['indirizzo'].values[0])
+        
+        if not operai.empty:
+            col3, col4 = st.columns(2)
+            operaio_sel = col3.selectbox("Operaio", operai['nome'].tolist())
             
-            if not operai.empty:
-                col3, col4 = st.columns(2)
-                operaio_sel = col3.selectbox("Operaio", operai['nome'].tolist())
-                costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0)
-                ore = st.number_input("Ore Lavorate", min_value=0.0, step=0.5)
-                
-                if st.form_submit_button("Salva Costo Manodopera"):
-                    totale = ore * costo_orario
-                    conn = get_connection(); c = conn.cursor()
-                    c.execute("INSERT INTO costo_manodopera (data, cantiere_id, operaio, ore, costo_orario, totale) VALUES (?,?,?,?,?,?)", 
-                              (str(data_m), cantiere_m, operaio_sel, ore, costo_orario, totale))
-                    conn.commit(); conn.close(); st.success("Costo manodopera registrato!"); st.rerun()
-            else:
-                st.info("Nessun operaio in anagrafica. Aggiungine uno nella sezione Anagrafiche.")
+            # Logica di auto-compilazione: cerchiamo il costo orario dell'operaio selezionato
+            costo_standard = operai[operai['nome'] == operaio_sel]['costo_orario'].values[0]
+            
+            costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=float(costo_standard))
+            ore = st.number_input("Ore Lavorate", min_value=0.0, step=0.5)
+            
+            if st.button("Salva Costo Manodopera", type="primary"):
+                totale = ore * costo_orario
+                conn = get_connection(); c = conn.cursor()
+                c.execute("INSERT INTO costo_manodopera (data, cantiere_id, operaio, ore, costo_orario, totale) VALUES (?,?,?,?,?,?)", 
+                          (str(data_m), cantiere_m, operaio_sel, ore, costo_orario, totale))
+                conn.commit(); conn.close(); st.success("Costo manodopera registrato!"); st.rerun()
+        else:
+            st.info("Nessun operaio in anagrafica. Aggiungine uno nella sezione Anagrafiche.")
 
     with tab2:
         with st.form("form_materiali", clear_on_submit=True):
