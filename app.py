@@ -142,17 +142,54 @@ def page_cantieri():
     
     if not df.empty:
         st.dataframe(df, use_container_width=True)
-        st.subheader("Azioni")
+        
+        # --- AZIONI CANTIERE ---
+        st.subheader("Gestisci Cantiere Selezionato")
         cantiere_sel = st.selectbox("Seleziona Cantiere:", df['id'].tolist(), format_func=lambda x: f"ID {x} - {df[df['id']==x]['indirizzo'].values[0]}")
-        col1, col2 = st.columns(2)
-        if col1.button("Chiudi Cantiere", type="primary"):
-            conn = get_connection(); c = conn.cursor()
-            c.execute("UPDATE preventivi SET stato='Chiuso' WHERE id=?", (cantiere_sel,))
-            conn.commit(); conn.close(); st.rerun()
-        if col2.button("Riapri Cantiere"):
-            conn = get_connection(); c = conn.cursor()
-            c.execute("UPDATE preventivi SET stato='Attivo' WHERE id=?", (cantiere_sel,))
-            conn.commit(); conn.close(); st.rerun()
+        
+        # Dati attuali del cantiere selezionato
+        cantiere_data = df[df['id'] == cantiere_sel].iloc[0]
+        
+        col_az1, col_az2, col_az3 = st.columns(3)
+        
+        # Pulsanti Stato
+        if cantiere_data['stato'] == 'Attivo':
+            if col_az1.button("🔴 Chiudi Cantiere", use_container_width=True):
+                conn = get_connection(); c = conn.cursor()
+                c.execute("UPDATE preventivi SET stato='Chiuso' WHERE id=?", (cantiere_sel,))
+                conn.commit(); conn.close(); st.rerun()
+        else:
+            if col_az1.button("🟢 Riapri Cantiere", use_container_width=True):
+                conn = get_connection(); c = conn.cursor()
+                c.execute("UPDATE preventivi SET stato='Attivo' WHERE id=?", (cantiere_sel,))
+                conn.commit(); conn.close(); st.rerun()
+        
+        # Pulsante Elimina (con conferma)
+        with col_az2:
+            if st.button("🗑️ Elimina Cantiere", type="primary", use_container_width=True):
+                st.session_state.confirm_delete_cantiere = True
+        
+        if st.session_state.get('confirm_delete_cantiere'):
+            st.warning("Sei sicuro? Questa azione è irreversibile.")
+            if st.button("Sì, elimina definitivamente"):
+                conn = get_connection(); c = conn.cursor()
+                c.execute("DELETE FROM preventivi WHERE id=?", (cantiere_sel,))
+                conn.commit(); conn.close()
+                st.session_state.confirm_delete_cantiere = False
+                st.success("Cantiere eliminato."); st.rerun()
+
+        # --- MODIFICA CANTIERE ---
+        with st.expander("✏️ Modifica Dati Cantiere"):
+            with st.form("modifica_cantiere_form"):
+                m_cliente = st.text_input("Cliente", value=cantiere_data['cliente'])
+                m_indirizzo = st.text_input("Indirizzo", value=cantiere_data['indirizzo'])
+                m_importo = st.number_input("Importo Contratto (€)", value=float(cantiere_data['importo_contratto']))
+                
+                if st.form_submit_button("Salva Modifiche"):
+                    conn = get_connection(); c = conn.cursor()
+                    c.execute("UPDATE preventivi SET cliente=?, indirizzo=?, importo_contratto=? WHERE id=?", 
+                              (m_cliente, m_indirizzo, m_importo, cantiere_sel))
+                    conn.commit(); conn.close(); st.success("Modifiche salvate!"); st.rerun()
     else:
         st.info("Nessun cantiere presente.")
 
@@ -171,10 +208,31 @@ def page_anagrafiche():
                         conn = get_connection(); c = conn.cursor()
                         c.execute("INSERT INTO operai (nome, ruolo, costo_orario) VALUES (?,?,?)", (nome, ruolo, costo))
                         conn.commit(); conn.close(); st.success("Operaio aggiunto!"); st.rerun()
+        
         conn = get_connection()
         df_op = pd.read_sql_query("SELECT * FROM operai", conn)
         conn.close()
         st.dataframe(df_op, use_container_width=True)
+        
+        if not df_op.empty:
+            st.subheader("Gestisci Operaio")
+            op_sel = st.selectbox("Seleziona Operaio", df_op['nome'].tolist())
+            op_data = df_op[df_op['nome'] == op_sel].iloc[0]
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                with st.form("modifica_operaio"):
+                    new_ruolo = st.text_input("Ruolo", value=op_data['ruolo'])
+                    new_costo = st.number_input("Costo Orario (€)", value=float(op_data['costo_orario']))
+                    if st.form_submit_button("Salva Modifiche"):
+                        conn = get_connection(); c = conn.cursor()
+                        c.execute("UPDATE operai SET ruolo=?, costo_orario=? WHERE nome=?", (new_ruolo, new_costo, op_sel))
+                        conn.commit(); conn.close(); st.success("Modifiche salvate!"); st.rerun()
+            with col2:
+                if st.button("Elimina Operaio", type="primary"):
+                    conn = get_connection(); c = conn.cursor()
+                    c.execute("DELETE FROM operai WHERE nome=?", (op_sel,))
+                    conn.commit(); conn.close(); st.success("Operaio eliminato!"); st.rerun()
 
     with tab2:
         with st.expander("➕ Nuovo Fornitore"):
@@ -187,10 +245,31 @@ def page_anagrafiche():
                         conn = get_connection(); c = conn.cursor()
                         c.execute("INSERT INTO fornitori (nome, piva, contatto) VALUES (?,?,?)", (nome_f, piva_f, contatto))
                         conn.commit(); conn.close(); st.success("Fornitore aggiunto!"); st.rerun()
+        
         conn = get_connection()
         df_forn = pd.read_sql_query("SELECT * FROM fornitori", conn)
         conn.close()
         st.dataframe(df_forn, use_container_width=True)
+        
+        if not df_forn.empty:
+            st.subheader("Gestisci Fornitore")
+            forn_sel = st.selectbox("Seleziona Fornitore", df_forn['nome'].tolist())
+            forn_data = df_forn[df_forn['nome'] == forn_sel].iloc[0]
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                with st.form("modifica_fornitore"):
+                    new_piva = st.text_input("P.IVA", value=forn_data['piva'])
+                    new_contatto = st.text_input("Contatto", value=forn_data['contatto'])
+                    if st.form_submit_button("Salva Modifiche"):
+                        conn = get_connection(); c = conn.cursor()
+                        c.execute("UPDATE fornitori SET piva=?, contatto=? WHERE nome=?", (new_piva, new_contatto, forn_sel))
+                        conn.commit(); conn.close(); st.success("Modifiche salvate!"); st.rerun()
+            with col2:
+                if st.button("Elimina Fornitore", type="primary"):
+                    conn = get_connection(); c = conn.cursor()
+                    c.execute("DELETE FROM fornitori WHERE nome=?", (forn_sel,))
+                    conn.commit(); conn.close(); st.success("Fornitore eliminato!"); st.rerun()
 
 def page_costi():
     st.title("📉 Inserimento Costi")
@@ -206,7 +285,6 @@ def page_costi():
     tab1, tab2 = st.tabs(["Costo Manodopera", "Costo Materiale"])
     
     with tab1:
-        # Usciamo dal form per permettere l'aggiornamento dinamico del costo orario
         st.subheader("Registra Ore Lavorate")
         col1, col2 = st.columns(2)
         data_m = col1.date_input("Data", datetime.date.today())
@@ -215,8 +293,6 @@ def page_costi():
         if not operai.empty:
             col3, col4 = st.columns(2)
             operaio_sel = col3.selectbox("Operaio", operai['nome'].tolist())
-            
-            # Logica di auto-compilazione: cerchiamo il costo orario dell'operaio selezionato
             costo_standard = operai[operai['nome'] == operaio_sel]['costo_orario'].values[0]
             
             costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=float(costo_standard))
@@ -229,7 +305,7 @@ def page_costi():
                           (str(data_m), cantiere_m, operaio_sel, ore, costo_orario, totale))
                 conn.commit(); conn.close(); st.success("Costo manodopera registrato!"); st.rerun()
         else:
-            st.info("Nessun operaio in anagrafica. Aggiungine uno nella sezione Anagrafiche.")
+            st.info("Nessun operaio in anagrafica.")
 
     with tab2:
         with st.form("form_materiali", clear_on_submit=True):
@@ -254,7 +330,7 @@ def page_costi():
                               (str(data_mat), cantiere_mat, fornitore_sel, documento, imponibile, iva, totale))
                     conn.commit(); conn.close(); st.success("Costo materiale registrato!"); st.rerun()
             else:
-                st.info("Nessun fornitore in anagrafica. Aggiungine uno nella sezione Anagrafiche.")
+                st.info("Nessun fornitore in anagrafica.")
 
     st.divider()
     st.subheader("Elenco Costi Registrati")
@@ -271,6 +347,30 @@ def page_costi():
     df_costi = pd.read_sql_query(query, conn)
     conn.close()
     st.dataframe(df_costi, use_container_width=True)
+
+    # --- MODIFICA/ELIMINA COSTI ---
+    if not df_costi.empty:
+        st.subheader("Gestisci Costo")
+        # Creiamo un ID univoco per la selezione combinando tipo e indice (semplificazione)
+        # Per un'app web reale servirebbero gli ID specifici, ma per ora usiamo la riga
+        costi_list = [f"{row['Tipo']} - {row['Data']} - {row['Descrizione']} - €{row['Totale']}" for _, row in df_costi.iterrows()]
+        costo_sel_str = st.selectbox("Seleziona Costo da modificare/eliminare", costi_list)
+        
+        if st.button("Elimina Costo Selezionato", type="primary"):
+            # Logica semplificata: cerchiamo di capire cosa eliminare
+            if "Manodopera" in costo_sel_str:
+                # Estraiamo i dati dalla stringa (un po' brutto ma funzionale per ora)
+                parts = costo_sel_str.split(" - ")
+                data_c = parts[1]; desc_c = parts[2]
+                conn = get_connection(); c = conn.cursor()
+                c.execute("DELETE FROM costo_manodopera WHERE data=? AND operaio=?", (data_c, desc_c))
+                conn.commit(); conn.close(); st.success("Costo eliminato!"); st.rerun()
+            else:
+                parts = costo_sel_str.split(" - ")
+                data_c = parts[1]; desc_c = parts[2]
+                conn = get_connection(); c = conn.cursor()
+                c.execute("DELETE FROM costo_materiali WHERE data=? AND fornitore=?", (data_c, desc_c))
+                conn.commit(); conn.close(); st.success("Costo eliminato!"); st.rerun()
 
 # --- NAVIGAZIONE ---
 if not st.session_state.logged_in:
