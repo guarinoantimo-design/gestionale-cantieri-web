@@ -3,7 +3,11 @@ import sqlite3
 import pandas as pd
 import datetime
 import hashlib
-import os
+import matplotlib.pyplot as plt
+import matplotlib
+
+# Configurazione per evitare problemi con i thread di Streamlit
+matplotlib.use('Agg')
 
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Gestionale Cantieri", page_icon="🏗️", layout="wide")
@@ -31,6 +35,9 @@ def init_db():
     c.execute("CREATE TABLE IF NOT EXISTS fornitori (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, piva TEXT, contatto TEXT)")
     c.execute("CREATE TABLE IF NOT EXISTS costo_manodopera (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, operaio TEXT, ore REAL, costo_orario REAL, totale REAL)")
     c.execute("CREATE TABLE IF NOT EXISTS costo_materiali (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, fornitore TEXT, documento TEXT, imponibile REAL, iva REAL, totale REAL)")
+    # NUOVE TABELLE FASE 3
+    c.execute("CREATE TABLE IF NOT EXISTS incassi (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, fattura TEXT, imponibile REAL, iva REAL, totale REAL)")
+    c.execute("CREATE TABLE IF NOT EXISTS avanzamento (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, descrizione TEXT, importo REAL)")
     
     c.execute("SELECT * FROM users WHERE username = 'admin'")
     if not c.fetchone():
@@ -97,7 +104,7 @@ def page_home():
     st.title("🏠 Home")
     st.write("Benvenuto nel Gestionale. Seleziona una sezione dal menu laterale.")
     
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("📋 Gestione Cantieri", use_container_width=True):
             st.session_state.current_page = "Cantieri"; st.rerun()
@@ -106,7 +113,13 @@ def page_home():
     with col2:
         if st.button("👥 Anagrafiche", use_container_width=True):
             st.session_state.current_page = "Anagrafiche"; st.rerun()
-        st.button("💰 Incassi (In arrivo)", disabled=True, use_container_width=True)
+        if st.button("💰 Incassi", use_container_width=True):
+            st.session_state.current_page = "Incassi"; st.rerun()
+    with col3:
+        if st.button("📈 Avanzamento", use_container_width=True):
+            st.session_state.current_page = "Avanzamento"; st.rerun()
+        if st.button("📊 Riepilogo", use_container_width=True):
+            st.session_state.current_page = "Riepilogo"; st.rerun()
 
 def page_cantieri():
     st.title("📋 Gestione Cantieri")
@@ -279,7 +292,6 @@ def page_costi():
 
     tab1, tab2 = st.tabs(["Costo Manodopera", "Costo Materiale"])
     
-    # --- INSERIMENTO ---
     with tab1:
         st.subheader("Registra Ore Lavorate")
         col1, col2 = st.columns(2)
@@ -329,8 +341,6 @@ def page_costi():
                 st.info("Nessun fornitore in anagrafica.")
 
     st.divider()
-    
-    # --- GESTIONE COSTO SELEZIONATO (Spostato qui, subito dopo l'inserimento) ---
     st.subheader("🛠️ Gestisci Costo Selezionato")
     
     conn = get_connection()
@@ -353,7 +363,6 @@ def page_costi():
         
         id_unico = costo_sel_str.split(" - ")[0]
         
-        # Recuperiamo i dati specifici del costo selezionato
         if id_unico.startswith("M-"):
             real_id = id_unico.replace("M-", "")
             conn = get_connection()
@@ -414,10 +423,207 @@ def page_costi():
         st.info("Nessun costo registrato finora.")
 
     st.divider()
-    
-    # --- ELENCO COSTI ---
     st.subheader("📋 Elenco Costi Registrati")
     st.dataframe(df_costi, use_container_width=True)
+
+# --- NUOVE PAGINE FASE 3 ---
+def page_incassi():
+    st.title("💰 Gestione Incassi")
+    cantieri = get_cantieri()
+    if cantieri.empty:
+        st.warning("Devi prima creare un cantiere!")
+        return
+
+    with st.expander("➕ Registra Nuovo Incasso"):
+        with st.form("nuovo_incasso", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            data_i = col1.date_input("Data Fattura", datetime.date.today())
+            cantiere_i = col2.selectbox("Cantiere", cantieri['id'].tolist(), format_func=lambda x: cantieri[cantieri['id']==x]['indirizzo'].values[0])
+            
+            col3, col4, col5 = st.columns(3)
+            fattura = col3.text_input("N. Fattura")
+            imponibile = col4.number_input("Imponibile (€)", min_value=0.0, step=100.0)
+            iva = col5.number_input("Aliquota IVA (%)", min_value=0.0, value=22.0, step=1.0)
+            
+            if st.form_submit_button("Salva Incasso"):
+                totale = imponibile + (imponibile * iva / 100)
+                conn = get_connection(); c = conn.cursor()
+                c.execute("INSERT INTO incassi (data, cantiere_id, fattura, imponibile, iva, totale) VALUES (?,?,?,?,?,?)", 
+                          (str(data_i), cantiere_i, fattura, imponibile, iva, totale))
+                conn.commit(); conn.close(); st.success("Incasso registrato!"); st.rerun()
+
+    st.divider()
+    conn = get_connection()
+    df = pd.read_sql_query("""
+        SELECT i.id, i.data, p.indirizzo as Cantiere, i.fattura, i.imponibile, i.iva, i.totale 
+        FROM incassi i JOIN preventivi p ON i.cantiere_id = p.id
+    """, conn)
+    conn.close()
+    st.dataframe(df, use_container_width=True)
+
+    if not df.empty:
+        st.subheader("Elimina Incasso")
+        incasso_sel = st.selectbox("Seleziona Incasso", df['id'].tolist(), format_func=lambda x: f"ID {x} - {df[df['id']==x]['fattura'].values[0]} - €{df[df['id']==x]['totale'].values[0]}")
+        if st.button("Elimina Incasso Selezionato", type="primary"):
+            conn = get_connection(); c = conn.cursor()
+            c.execute("DELETE FROM incassi WHERE id=?", (incasso_sel,))
+            conn.commit(); conn.close(); st.success("Incasso eliminato!"); st.rerun()
+
+def page_avanzamento():
+    st.title("📈 Avanzamento Lavori (SAL)")
+    cantieri = get_cantieri()
+    if cantieri.empty:
+        st.warning("Devi prima creare un cantiere!")
+        return
+
+    with st.expander("➕ Registra Nuovo SAL"):
+        with st.form("nuovo_sal", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            data_s = col1.date_input("Data SAL", datetime.date.today())
+            cantiere_s = col2.selectbox("Cantiere", cantieri['id'].tolist(), format_func=lambda x: cantieri[cantieri['id']==x]['indirizzo'].values[0])
+            
+            descrizione = st.text_input("Descrizione Lavori")
+            importo = st.number_input("Importo Realizzato (€)", min_value=0.0, step=100.0)
+            
+            if st.form_submit_button("Salva SAL"):
+                conn = get_connection(); c = conn.cursor()
+                c.execute("INSERT INTO avanzamento (data, cantiere_id, descrizione, importo) VALUES (?,?,?,?)", 
+                          (str(data_s), cantiere_s, descrizione, importo))
+                conn.commit(); conn.close(); st.success("SAL registrato!"); st.rerun()
+
+    st.divider()
+    conn = get_connection()
+    df = pd.read_sql_query("""
+        SELECT a.id, a.data, p.indirizzo as Cantiere, a.descrizione, a.importo 
+        FROM avanzamento a JOIN preventivi p ON a.cantiere_id = p.id
+    """, conn)
+    conn.close()
+    st.dataframe(df, use_container_width=True)
+
+def page_riepilogo():
+    st.title("📊 Riepilogo e Grafici")
+    
+    conn = get_connection()
+    
+    # 1. Totali Aziendali (Solo Cantieri Attivi)
+    query_totali = """
+        SELECT 
+            (SELECT SUM(importo_contratto) FROM preventivi WHERE stato = 'Attivo') as tot_contratti,
+            (SELECT SUM(totale) FROM incassi i JOIN preventivi p ON i.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_incassi,
+            (SELECT SUM(totale) FROM costo_manodopera c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_costi_man,
+            (SELECT SUM(totale) FROM costo_materiali c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_costi_mat
+    """
+    res = pd.read_sql_query(query_totali, conn).iloc[0]
+    
+    tot_contratti = res['tot_contratti'] or 0
+    tot_incassi = res['tot_incassi'] or 0
+    tot_costi = (res['tot_costi_man'] or 0) + (res['tot_costi_mat'] or 0)
+    saldo = tot_incassi - tot_costi
+
+    st.markdown("### 🏢 Totali Aziendali (Solo Cantieri Attivi)")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Contratti", f"€ {tot_contratti:,.2f}")
+    col2.metric("Incassi", f"€ {tot_incassi:,.2f}")
+    col3.metric("Costi", f"€ {tot_costi:,.2f}", delta_color="inverse")
+    col4.metric("Saldo", f"€ {saldo:,.2f}", delta_color="normal")
+    
+    st.divider()
+
+    # 2. Dettaglio e Grafico
+    st.markdown("### 🔍 Dettaglio Cantiere")
+    df_cantieri = pd.read_sql_query("SELECT id, indirizzo FROM preventivi", conn)
+    
+    if df_cantieri.empty:
+        st.info("Nessun cantiere presente.")
+        conn.close()
+        return
+        
+    opzioni = ["--- TUTTI I CANTIERI ATTIVI ---"] + [f"{row['id']} - {row['indirizzo']}" for _, row in df_cantieri.iterrows()]
+    scelta = st.selectbox("Seleziona Cantiere per il grafico:", opzioni)
+    
+    if scelta == "--- TUTTI I CANTIERI ATTIVI ---":
+        # Grafico Globale
+        query_incassi = "SELECT i.data, i.totale FROM incassi i JOIN preventivi p ON i.cantiere_id = p.id WHERE p.stato = 'Attivo'"
+        query_costi_m = "SELECT c.data, c.totale FROM costo_manodopera c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo'"
+        query_costi_mat = "SELECT c.data, c.totale FROM costo_materiali c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo'"
+        
+        df_inc = pd.read_sql_query(query_incassi, conn)
+        df_man = pd.read_sql_query(query_costi_m, conn)
+        df_mat = pd.read_sql_query(query_costi_mat, conn)
+        
+        if df_inc.empty and df_man.empty and df_mat.empty:
+            st.info("Nessun dato economico disponibile per i cantieri attivi.")
+        else:
+            df_inc['Tipo'] = 'Incasso'; df_man['Tipo'] = 'Costo Man'; df_mat['Tipo'] = 'Costo Mat'
+            all_movs = pd.concat([df_inc, df_man, df_mat]).sort_values('data')
+            
+            if not all_movs.empty:
+                all_movs['data'] = pd.to_datetime(all_movs['data'])
+                all_movs['Incassi Cum'] = all_movs.apply(lambda x: x['totale'] if x['Tipo'] == 'Incasso' else 0, axis=1).cumsum()
+                all_movs['Costi Cum'] = all_movs.apply(lambda x: x['totale'] if 'Costo' in x['Tipo'] else 0, axis=1).cumsum()
+
+                fig, ax = plt.subplots(figsize=(10, 4))
+                ax.plot(all_movs['data'], all_movs['Incassi Cum'], label='Incassi', color='green', marker='o', linewidth=2)
+                ax.plot(all_movs['data'], all_movs['Costi Cum'], label='Costi', color='red', marker='x', linewidth=2)
+                ax.set_title("Andamento Economico Globale (Cantieri Attivi)")
+                ax.legend(); ax.grid(True, linestyle='--', alpha=0.6)
+                plt.xticks(rotation=45); plt.tight_layout()
+                st.pyplot(fig)
+            else:
+                st.info("Nessun dato disponibile.")
+    else:
+        # Grafico Singolo
+        cid = int(scelta.split(" - ")[0])
+        
+        # Dati Cantiere
+        query_dati = f"""
+            SELECT 
+                p.importo_contratto,
+                (SELECT SUM(totale) FROM incassi WHERE cantiere_id = {cid}) as incassi,
+                (SELECT SUM(totale) FROM costo_manodopera WHERE cantiere_id = {cid}) as costi_man,
+                (SELECT SUM(totale) FROM costo_materiali WHERE cantiere_id = {cid}) as costi_mat,
+                (SELECT SUM(importo) FROM avanzamento WHERE cantiere_id = {cid}) as avanzamento
+            FROM preventivi p WHERE p.id = {cid}
+        """
+        dati = pd.read_sql_query(query_dati, conn).iloc[0]
+        
+        importo_contratto = dati['importo_contratto'] or 0
+        incassi_c = dati['incassi'] or 0
+        costi_c = (dati['costi_man'] or 0) + (dati['costi_mat'] or 0)
+        avanz = dati['avanzamento'] or 0
+        perc_avanz = (avanz / importo_contratto * 100) if importo_contratto > 0 else 0
+        
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Contratto", f"€ {importo_contratto:,.2f}")
+        col2.metric("Incassato", f"€ {incassi_c:,.2f}")
+        col3.metric("Costi", f"€ {costi_c:,.2f}", delta_color="inverse")
+        col4.metric("Avanzamento", f"{perc_avanz:.1f}%")
+        
+        st.progress(min(perc_avanz / 100, 1.0))
+        
+        # Grafico
+        query_incassi = f"SELECT data, totale, 'Incasso' as Tipo FROM incassi WHERE cantiere_id = {cid}"
+        query_costi_m = f"SELECT data, totale, 'Costo Man' as Tipo FROM costo_manodopera WHERE cantiere_id = {cid}"
+        query_costi_mat = f"SELECT data, totale, 'Costo Mat' as Tipo FROM costo_materiali WHERE cantiere_id = {cid}"
+        
+        all_movs = pd.read_sql_query(f"{query_incassi} UNION ALL {query_costi_m} UNION ALL {query_costi_mat} ORDER BY data", conn)
+        
+        if not all_movs.empty:
+            all_movs['data'] = pd.to_datetime(all_movs['data'])
+            all_movs['Incassi Cum'] = all_movs.apply(lambda x: x['totale'] if x['Tipo'] == 'Incasso' else 0, axis=1).cumsum()
+            all_movs['Costi Cum'] = all_movs.apply(lambda x: x['totale'] if 'Costo' in x['Tipo'] else 0, axis=1).cumsum()
+
+            fig, ax = plt.subplots(figsize=(10, 4))
+            ax.plot(all_movs['data'], all_movs['Incassi Cum'], label='Incassi', color='green', marker='o', linewidth=2)
+            ax.plot(all_movs['data'], all_movs['Costi Cum'], label='Costi', color='red', marker='x', linewidth=2)
+            ax.set_title(f"Andamento Economico: {scelta.split(' - ')[1]}")
+            ax.legend(); ax.grid(True, linestyle='--', alpha=0.6)
+            plt.xticks(rotation=45); plt.tight_layout()
+            st.pyplot(fig)
+        else:
+            st.info("Nessun movimento economico per questo cantiere.")
+
+    conn.close()
 
 # --- NAVIGAZIONE ---
 if not st.session_state.logged_in:
@@ -434,6 +640,12 @@ else:
             st.session_state.current_page = "Anagrafiche"; st.rerun()
         if st.button("📉 Costi", use_container_width=True):
             st.session_state.current_page = "Costi"; st.rerun()
+        if st.button("💰 Incassi", use_container_width=True):
+            st.session_state.current_page = "Incassi"; st.rerun()
+        if st.button("📈 Avanzamento", use_container_width=True):
+            st.session_state.current_page = "Avanzamento"; st.rerun()
+        if st.button("📊 Riepilogo", use_container_width=True):
+            st.session_state.current_page = "Riepilogo"; st.rerun()
         
         st.divider()
         if st.button("🚪 Logout", type="primary", use_container_width=True):
@@ -443,3 +655,6 @@ else:
     elif st.session_state.current_page == "Cantieri": page_cantieri()
     elif st.session_state.current_page == "Anagrafiche": page_anagrafiche()
     elif st.session_state.current_page == "Costi": page_costi()
+    elif st.session_state.current_page == "Incassi": page_incassi()
+    elif st.session_state.current_page == "Avanzamento": page_avanzamento()
+    elif st.session_state.current_page == "Riepilogo": page_riepilogo()
