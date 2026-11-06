@@ -143,16 +143,13 @@ def page_cantieri():
     if not df.empty:
         st.dataframe(df, use_container_width=True)
         
-        # --- AZIONI CANTIERE ---
         st.subheader("Gestisci Cantiere Selezionato")
         cantiere_sel = st.selectbox("Seleziona Cantiere:", df['id'].tolist(), format_func=lambda x: f"ID {x} - {df[df['id']==x]['indirizzo'].values[0]}")
         
-        # Dati attuali del cantiere selezionato
         cantiere_data = df[df['id'] == cantiere_sel].iloc[0]
         
-        col_az1, col_az2, col_az3 = st.columns(3)
+        col_az1, col_az2 = st.columns(2)
         
-        # Pulsanti Stato
         if cantiere_data['stato'] == 'Attivo':
             if col_az1.button("🔴 Chiudi Cantiere", use_container_width=True):
                 conn = get_connection(); c = conn.cursor()
@@ -164,7 +161,6 @@ def page_cantieri():
                 c.execute("UPDATE preventivi SET stato='Attivo' WHERE id=?", (cantiere_sel,))
                 conn.commit(); conn.close(); st.rerun()
         
-        # Pulsante Elimina (con conferma)
         with col_az2:
             if st.button("🗑️ Elimina Cantiere", type="primary", use_container_width=True):
                 st.session_state.confirm_delete_cantiere = True
@@ -178,7 +174,6 @@ def page_cantieri():
                 st.session_state.confirm_delete_cantiere = False
                 st.success("Cantiere eliminato."); st.rerun()
 
-        # --- MODIFICA CANTIERE ---
         with st.expander("✏️ Modifica Dati Cantiere"):
             with st.form("modifica_cantiere_form"):
                 m_cliente = st.text_input("Cliente", value=cantiere_data['cliente'])
@@ -336,40 +331,44 @@ def page_costi():
     st.subheader("Elenco Costi Registrati")
     
     conn = get_connection()
+    # Aggiungiamo un ID univoco artificiale per la gestione (es. M1, M2 per manodopera, Mat1, Mat2 per materiali)
     query = """
-        SELECT 'Manodopera' as Tipo, data, (SELECT indirizzo FROM preventivi WHERE id = cantiere_id) as Cantiere, operaio as Descrizione, totale as Totale
+        SELECT 'M-' || id as ID_Unico, 'Manodopera' as Tipo, data, (SELECT indirizzo FROM preventivi WHERE id = cantiere_id) as Cantiere, operaio as Descrizione, totale as Totale
         FROM costo_manodopera
         UNION ALL
-        SELECT 'Materiale' as Tipo, data, (SELECT indirizzo FROM preventivi WHERE id = cantiere_id) as Cantiere, fornitore as Descrizione, totale as Totale
+        SELECT 'Mat-' || id as ID_Unico, 'Materiale' as Tipo, data, (SELECT indirizzo FROM preventivi WHERE id = cantiere_id) as Cantiere, fornitore as Descrizione, totale as Totale
         FROM costo_materiali
         ORDER BY data DESC
     """
     df_costi = pd.read_sql_query(query, conn)
     conn.close()
+    
+    # Rinomina per sicurezza (previene errori KeyError)
+    df_costi.columns = [c.capitalize() for c in df_costi.columns]
+    
     st.dataframe(df_costi, use_container_width=True)
 
     # --- MODIFICA/ELIMINA COSTI ---
     if not df_costi.empty:
         st.subheader("Gestisci Costo")
-        # Creiamo un ID univoco per la selezione combinando tipo e indice (semplificazione)
-        # Per un'app web reale servirebbero gli ID specifici, ma per ora usiamo la riga
-        costi_list = [f"{row['Tipo']} - {row['Data']} - {row['Descrizione']} - €{row['Totale']}" for _, row in df_costi.iterrows()]
+        
+        # Creiamo la lista per il menu a tendina usando l'ID univoco
+        costi_list = [f"{row['Id_unico']} - {row['Data']} - {row['Descrizione']} - €{row['Totale']}" for _, row in df_costi.iterrows()]
         costo_sel_str = st.selectbox("Seleziona Costo da modificare/eliminare", costi_list)
         
-        if st.button("Elimina Costo Selezionato", type="primary"):
-            # Logica semplificata: cerchiamo di capire cosa eliminare
-            if "Manodopera" in costo_sel_str:
-                # Estraiamo i dati dalla stringa (un po' brutto ma funzionale per ora)
-                parts = costo_sel_str.split(" - ")
-                data_c = parts[1]; desc_c = parts[2]
+        # Estraiamo l'ID unico e il tipo
+        id_unico = costo_sel_str.split(" - ")[0]
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Elimina Costo Selezionato", type="primary"):
                 conn = get_connection(); c = conn.cursor()
-                c.execute("DELETE FROM costo_manodopera WHERE data=? AND operaio=?", (data_c, desc_c))
-                conn.commit(); conn.close(); st.success("Costo eliminato!"); st.rerun()
-            else:
-                parts = costo_sel_str.split(" - ")
-                data_c = parts[1]; desc_c = parts[2]
-                conn = get_connection(); c = conn.cursor()
-                c.execute("DELETE FROM costo_materiali WHERE data=? AND fornitore=?", (data_c, desc_c))
+                if id_unico.startswith("M-"):
+                    real_id = id_unico.replace("M-", "")
+                    c.execute("DELETE FROM costo_manodopera WHERE id=?", (real_id,))
+                else:
+                    real_id = id_unico.replace("Mat-", "")
+                    c.execute("DELETE FROM costo_materiali WHERE id=?", (real_id,))
                 conn.commit(); conn.close(); st.success("Costo eliminato!"); st.rerun()
 
 # --- NAVIGAZIONE ---
