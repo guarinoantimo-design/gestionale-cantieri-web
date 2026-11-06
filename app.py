@@ -279,6 +279,7 @@ def page_costi():
 
     tab1, tab2 = st.tabs(["Costo Manodopera", "Costo Materiale"])
     
+    # --- INSERIMENTO ---
     with tab1:
         st.subheader("Registra Ore Lavorate")
         col1, col2 = st.columns(2)
@@ -328,10 +329,11 @@ def page_costi():
                 st.info("Nessun fornitore in anagrafica.")
 
     st.divider()
-    st.subheader("Elenco Costi Registrati")
+    
+    # --- GESTIONE COSTO SELEZIONATO (Spostato qui, subito dopo l'inserimento) ---
+    st.subheader("🛠️ Gestisci Costo Selezionato")
     
     conn = get_connection()
-    # Aggiungiamo un ID univoco artificiale per la gestione (es. M1, M2 per manodopera, Mat1, Mat2 per materiali)
     query = """
         SELECT 'M-' || id as ID_Unico, 'Manodopera' as Tipo, data, (SELECT indirizzo FROM preventivi WHERE id = cantiere_id) as Cantiere, operaio as Descrizione, totale as Totale
         FROM costo_manodopera
@@ -343,33 +345,79 @@ def page_costi():
     df_costi = pd.read_sql_query(query, conn)
     conn.close()
     
-    # Rinomina per sicurezza (previene errori KeyError)
     df_costi.columns = [c.capitalize() for c in df_costi.columns]
     
-    st.dataframe(df_costi, use_container_width=True)
-
-    # --- MODIFICA/ELIMINA COSTI ---
     if not df_costi.empty:
-        st.subheader("Gestisci Costo")
-        
-        # Creiamo la lista per il menu a tendina usando l'ID univoco
         costi_list = [f"{row['Id_unico']} - {row['Data']} - {row['Descrizione']} - €{row['Totale']}" for _, row in df_costi.iterrows()]
-        costo_sel_str = st.selectbox("Seleziona Costo da modificare/eliminare", costi_list)
+        costo_sel_str = st.selectbox("Seleziona un costo da gestire:", costi_list)
         
-        # Estraiamo l'ID unico e il tipo
         id_unico = costo_sel_str.split(" - ")[0]
         
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("Elimina Costo Selezionato", type="primary"):
-                conn = get_connection(); c = conn.cursor()
-                if id_unico.startswith("M-"):
-                    real_id = id_unico.replace("M-", "")
+        # Recuperiamo i dati specifici del costo selezionato
+        if id_unico.startswith("M-"):
+            real_id = id_unico.replace("M-", "")
+            conn = get_connection()
+            df_specifico = pd.read_sql_query(f"SELECT * FROM costo_manodopera WHERE id={real_id}", conn)
+            conn.close()
+            row = df_specifico.iloc[0]
+            
+            with st.form("modifica_manodopera"):
+                st.write("Dettagli Manodopera")
+                col1, col2 = st.columns(2)
+                m_data = col1.date_input("Data", pd.to_datetime(row['data']).date())
+                m_ore = col2.number_input("Ore Lavorate", value=float(row['ore']), step=0.5)
+                m_costo = st.number_input("Costo Orario (€)", value=float(row['costo_orario']), step=1.0)
+                
+                col_btn1, col_btn2 = st.columns(2)
+                if col_btn1.form_submit_button("Salva Modifiche"):
+                    tot = m_ore * m_costo
+                    conn = get_connection(); c = conn.cursor()
+                    c.execute("UPDATE costo_manodopera SET data=?, ore=?, costo_orario=?, totale=? WHERE id=?", 
+                              (str(m_data), m_ore, m_costo, tot, real_id))
+                    conn.commit(); conn.close(); st.success("Costo aggiornato!"); st.rerun()
+                
+                if col_btn2.form_submit_button("Elimina Costo", type="primary"):
+                    conn = get_connection(); c = conn.cursor()
                     c.execute("DELETE FROM costo_manodopera WHERE id=?", (real_id,))
-                else:
-                    real_id = id_unico.replace("Mat-", "")
+                    conn.commit(); conn.close(); st.success("Costo eliminato!"); st.rerun()
+
+        else:
+            real_id = id_unico.replace("Mat-", "")
+            conn = get_connection()
+            df_specifico = pd.read_sql_query(f"SELECT * FROM costo_materiali WHERE id={real_id}", conn)
+            conn.close()
+            row = df_specifico.iloc[0]
+            
+            with st.form("modifica_materiali"):
+                st.write("Dettagli Materiale")
+                col1, col2 = st.columns(2)
+                m_data = col1.date_input("Data", pd.to_datetime(row['data']).date())
+                m_doc = col2.text_input("N. Documento", value=row['documento'])
+                
+                col3, col4 = st.columns(2)
+                m_imp = col3.number_input("Imponibile (€)", value=float(row['imponibile']), step=10.0)
+                m_iva = col4.number_input("Aliquota IVA (%)", value=float(row['iva']), step=1.0)
+                
+                col_btn1, col_btn2 = st.columns(2)
+                if col_btn1.form_submit_button("Salva Modifiche"):
+                    tot = m_imp + (m_imp * m_iva / 100)
+                    conn = get_connection(); c = conn.cursor()
+                    c.execute("UPDATE costo_materiali SET data=?, documento=?, imponibile=?, iva=?, totale=? WHERE id=?", 
+                              (str(m_data), m_doc, m_imp, m_iva, tot, real_id))
+                    conn.commit(); conn.close(); st.success("Costo aggiornato!"); st.rerun()
+                
+                if col_btn2.form_submit_button("Elimina Costo", type="primary"):
+                    conn = get_connection(); c = conn.cursor()
                     c.execute("DELETE FROM costo_materiali WHERE id=?", (real_id,))
-                conn.commit(); conn.close(); st.success("Costo eliminato!"); st.rerun()
+                    conn.commit(); conn.close(); st.success("Costo eliminato!"); st.rerun()
+    else:
+        st.info("Nessun costo registrato finora.")
+
+    st.divider()
+    
+    # --- ELENCO COSTI ---
+    st.subheader("📋 Elenco Costi Registrati")
+    st.dataframe(df_costi, use_container_width=True)
 
 # --- NAVIGAZIONE ---
 if not st.session_state.logged_in:
