@@ -293,81 +293,49 @@ def page_costi():
     with tab1:
         st.subheader("Registra Ore Lavorate")
         
-        # --- COMPONENTE VOCALE SEMPLIFICATO ---
+        # --- COMPONENTE VOCALE (NATIVO STREAMLIT) ---
         st.markdown("---")
         st.caption("🎤 Dettatura Vocale: Dì ad esempio 'Cantiere Via Roma, Operaio Mario Rossi, 8 ore'")
         
-        # Il componente invia il testo tramite un evento JavaScript a Streamlit
-        voice_html_man = """
-        <div id="voice-container-man">
-            <button id="start-record-man" style="background-color: #27AE60; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; width: 100%;">
-                🎤 Ascolta e Compila
-            </button>
-            <p id="status-man" style="margin-top: 10px; font-style: italic; color: #7F8C8D;">Premi il pulsante e parla...</p>
-            <textarea id="result-man" rows="2" style="width: 100%; margin-top: 10px; padding: 10px; border-radius: 5px; border: 1px solid #BDC3C7; display: none;"></textarea>
-        </div>
-        <script>
-            const startBtnMan = document.getElementById('start-record-man');
-            const statusMan = document.getElementById('status-man');
-            const resultMan = document.getElementById('result-man');
-            
-            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-            
-            if (!SpeechRecognition) {
-                statusMan.innerText = "Il tuo browser non supporta il riconoscimento vocale. Usa Chrome o Edge.";
-            } else {
-                const recognition = new SpeechRecognition();
-                recognition.lang = 'it-IT';
-                recognition.interimResults = false;
-                recognition.maxAlternatives = 1;
-                
-                startBtnMan.addEventListener('click', () => {
-                    recognition.start();
-                    statusMan.innerText = "In ascolto...";
-                    startBtnMan.disabled = true;
-                });
-                
-                recognition.addEventListener('result', (event) => {
-                    const transcript = event.results[0][0].transcript;
-                    statusMan.innerText = "Riconosciuto: " + transcript;
-                    resultMan.value = transcript;
-                    
-                    // Invia il testo a Streamlit usando il meccanismo di Streamlit
-                    const streamlitData = { type: "voce_manodopera", value: transcript };
-                    window.parent.postMessage(streamlitData, "*");
-                });
-                
-                recognition.addEventListener('error', (event) => {
-                    statusMan.innerText = "Errore: " + event.error + ". Controlla i permessi del microfono.";
-                    startBtnMan.disabled = false;
-                });
-                
-                recognition.addEventListener('end', () => {
-                    if (statusMan.innerText === "In ascolto...") {
-                        statusMan.innerText = "Nessun parlato rilevato. Riprova.";
-                        startBtnMan.disabled = false;
-                    }
-                });
-            }
-        </script>
-        """
-        st.components.v1.html(voice_html_man, height=150)
+        # Usiamo la libreria che avevamo testato e che funziona
+        voice_result = multimodal_chat_input(
+            placeholder="Premi il microfono e parla...",
+            enable_voice_input=True,
+            voice_recognition_method="web_speech",
+            voice_language="it-IT",
+            key="voice_input_costi_raffinato"
+        )
         
-        # Recuperiamo il testo dalla memoria (o lo inizializziamo vuoto)
-        testo_riconosciuto = st.session_state.get("voce_manodopera", "")
+        # Se il risultato contiene del testo, lo salviamo in una variabile di sessione
+        if voice_result and voice_result.get("text"):
+            st.session_state["testo_dettato"] = voice_result["text"]
+            
+        # Mostriamo il testo in un campo modificabile
+        testo_corretto = st.text_area(
+            "Testo riconosciuto (puoi correggerlo prima di elaborare):", 
+            value=st.session_state.get("testo_dettato", ""),
+            key="testo_dettato_modificabile",
+            height=100
+        )
         
-        # Mostriamo il testo riconosciuto e permettiamo di correggerlo
-        testo_corretto = st.text_input("Testo riconosciuto (puoi correggerlo):", value=testo_riconosciuto, key="input_voce_man")
-        st.session_state["voce_manodopera"] = testo_corretto
+        # Pulsante per elaborare il testo e compilare i campi
+        if st.button("🧠 Elabora Dettatura", type="secondary", key="btn_elabora_dettatura"):
+            st.session_state["testo_dettato_elaborato"] = testo_corretto
+            st.rerun()
+        
+        # ---------------------------
+        
+        # Recuperiamo il testo che è stato "elaborato"
+        testo_da_analizzare = st.session_state.get("testo_dettato_elaborato", "")
         
         col1, col2 = st.columns(2)
         data_m = col1.date_input("Data", datetime.date.today(), key="data_manodopera")
         
         # Logica di auto-selezione del cantiere
         cantiere_index = 0
-        if testo_corretto:
+        if testo_da_analizzare:
             for i, c in enumerate(cantieri['indirizzo'].tolist()):
-                if c.lower() in testo_corretto.lower():
+                if c.lower() in testo_da_analizzare.lower():
                     cantiere_index = i
                     break
         cantiere_m = col2.selectbox("Cantiere", cantieri['id'].tolist(), format_func=lambda x: cantieri[cantieri['id']==x]['indirizzo'].values[0], key="cant_manodopera", index=cantiere_index)
@@ -377,9 +345,9 @@ def page_costi():
             
             # Logica di auto-selezione dell'operaio
             operaio_index = 0
-            if testo_corretto:
+            if testo_da_analizzare:
                 for i, o in enumerate(operai['nome'].tolist()):
-                    if o.lower() in testo_corretto.lower():
+                    if o.lower() in testo_da_analizzare.lower():
                         operaio_index = i
                         break
             operaio_sel = col3.selectbox("Operaio", operai['nome'].tolist(), key="op_manodopera", index=operaio_index)
@@ -389,9 +357,9 @@ def page_costi():
             
             # Logica di auto-compilazione delle ore
             ore_default = 0.0
-            if testo_corretto:
+            if testo_da_analizzare:
                 import re
-                numeri_trovati = re.findall(r'\d+', testo_corretto)
+                numeri_trovati = re.findall(r'\d+', testo_da_analizzare)
                 if numeri_trovati:
                     ore_default = float(numeri_trovati[0])
                     
@@ -403,7 +371,9 @@ def page_costi():
                 c.execute("INSERT INTO costo_manodopera (data, cantiere_id, operaio, ore, costo_orario, totale) VALUES (?,?,?,?,?,?)", 
                           (str(data_m), cantiere_m, operaio_sel, ore, costo_orario, totale))
                 conn.commit(); conn.close(); 
-                st.session_state["voce_manodopera"] = "" # Pulisce la memoria
+                # Pulisce la memoria per il prossimo inserimento
+                st.session_state["testo_dettato"] = ""
+                st.session_state["testo_dettato_elaborato"] = ""
                 st.success("Costo manodopera registrato!"); st.rerun()
         else:
             st.info("Nessun operaio in anagrafica.")
