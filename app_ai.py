@@ -141,14 +141,14 @@ def page_home():
     
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
-        if st.button("📋 Gestione Cantieri", use_container_width=True, key="home_btn_cantieri"):
+        if st.button("📋 Inserisci Cantieri", use_container_width=True, key="home_btn_cantieri"):
             st.session_state.current_page = "Cantieri"; st.rerun()
-        if st.button("📉 Inserimento Costi", use_container_width=True, key="home_btn_costi"):
+        if st.button("📉 Inserisci Costi", use_container_width=True, key="home_btn_costi"):
             st.session_state.current_page = "Costi"; st.rerun()
-        if st.button("📈 Avanzamento", use_container_width=True, key="home_btn_avanzamento"):
+        if st.button("📈 Avanzamento Cantieri", use_container_width=True, key="home_btn_avanzamento"):
             st.session_state.current_page = "Avanzamento"; st.rerun()
     with col_btn2:
-        if st.button("👥 Anagrafiche", use_container_width=True, key="home_btn_anagrafiche"):
+        if st.button("👥 Anagrafica", use_container_width=True, key="home_btn_anagrafiche"):
             st.session_state.current_page = "Anagrafiche"; st.rerun()
         if st.button("💰 Incassi", use_container_width=True, key="home_btn_incassi"):
             st.session_state.current_page = "Incassi"; st.rerun()
