@@ -6,7 +6,7 @@ import hashlib
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from st_chat_input_multimodal import multimodal_chat_input
+import re
 
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Gestionale Cantieri", page_icon="🏗️", layout="wide")
@@ -104,7 +104,6 @@ def page_home():
     
     col1, col2 = st.columns(2)
     with col1:
-        # Aggiunto 'key' univoco per evitare conflitti
         if st.button("📋 Gestione Cantieri", use_container_width=True, key="home_btn_cantieri"):
             st.session_state.current_page = "Cantieri"; st.rerun()
         if st.button("📉 Inserimento Costi", use_container_width=True, key="home_btn_costi"):
@@ -293,45 +292,83 @@ def page_costi():
     with tab1:
         st.subheader("Registra Ore Lavorate")
         
-        # --- COMPONENTE VOCALE (NATIVO STREAMLIT) ---
         st.markdown("---")
         st.caption("🎤 Dettatura Vocale: Dì ad esempio 'Cantiere Via Roma, Operaio Mario Rossi, 8 ore'")
         
-        # Usiamo la libreria che avevamo testato e che funziona
-        voice_result = multimodal_chat_input(
-            placeholder="Premi il microfono e parla...",
-            enable_voice_input=True,
-            voice_recognition_method="web_speech",
-            voice_language="it-IT",
-            key="voice_input_costi_raffinato"
-        )
-        
-        # Se il risultato contiene del testo, lo salviamo in una variabile di sessione
-        if voice_result and voice_result.get("text"):
-            st.session_state["testo_dettato"] = voice_result["text"]
+        voice_html_man = """
+        <div id="voice-container-man">
+            <button id="start-record-man" style="background-color: #27AE60; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; width: 100%;">
+                🎤 Inizia a Parlare
+            </button>
+            <p id="status-man" style="margin-top: 10px; font-style: italic; color: #7F8C8D;">Premi il pulsante e parla...</p>
+            <textarea id="result-man" rows="3" style="width: 100%; margin-top: 10px; padding: 10px; border-radius: 5px; border: 1px solid #BDC3C7;" placeholder="Il testo riconosciuto apparirà qui..."></textarea>
+            <button id="copy-btn-man" style="background-color: #3498DB; color: white; padding: 5px 10px; border: none; border-radius: 5px; cursor: pointer; margin-top: 5px;">
+                📋 Copia il testo
+            </button>
+        </div>
+        <script>
+            const startBtnMan = document.getElementById('start-record-man');
+            const statusMan = document.getElementById('status-man');
+            const resultMan = document.getElementById('result-man');
+            const copyBtnMan = document.getElementById('copy-btn-man');
             
-        # Mostriamo il testo in un campo modificabile
-        testo_corretto = st.text_area(
-            "Testo riconosciuto (puoi correggerlo prima di elaborare):", 
-            value=st.session_state.get("testo_dettato", ""),
-            key="testo_dettato_modificabile",
-            height=100
-        )
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            
+            if (!SpeechRecognition) {
+                statusMan.innerText = "Il tuo browser non supporta il riconoscimento vocale. Usa Chrome o Edge.";
+            } else {
+                const recognition = new SpeechRecognition();
+                recognition.lang = 'it-IT';
+                recognition.interimResults = false;
+                recognition.maxAlternatives = 1;
+                
+                startBtnMan.addEventListener('click', () => {
+                    recognition.start();
+                    statusMan.innerText = "In ascolto...";
+                    startBtnMan.disabled = true;
+                });
+                
+                recognition.addEventListener('result', (event) => {
+                    const transcript = event.results[0][0].transcript;
+                    statusMan.innerText = "Riconosciuto!";
+                    resultMan.value = transcript;
+                    startBtnMan.disabled = false;
+                });
+                
+                recognition.addEventListener('error', (event) => {
+                    statusMan.innerText = "Errore: " + event.error + ". Controlla i permessi del microfono.";
+                    startBtnMan.disabled = false;
+                });
+                
+                recognition.addEventListener('end', () => {
+                    if (statusMan.innerText === "In ascolto...") {
+                        statusMan.innerText = "Nessun parlato rilevato. Riprova.";
+                        startBtnMan.disabled = false;
+                    }
+                });
+                
+                copyBtnMan.addEventListener('click', () => {
+                    resultMan.select();
+                    document.execCommand('copy');
+                    statusMan.innerText = "Testo copiato negli appunti!";
+                });
+            }
+        </script>
+        """
+        st.components.v1.html(voice_html_man, height=250)
         
-        # Pulsante per elaborare il testo e compilare i campi
-        if st.button("🧠 Elabora Dettatura", type="secondary", key="btn_elabora_dettatura"):
-            st.session_state["testo_dettato_elaborato"] = testo_corretto
+        st.markdown("**Incolla qui il testo copiato (Ctrl+V) e premi 'Elabora':**")
+        testo_incollato = st.text_area("Testo dettato:", height=100, key="testo_incollato_man")
+        
+        if st.button("🧠 Elabora Dettatura", type="secondary", key="btn_elabora_man"):
+            st.session_state["testo_da_analizzare_man"] = testo_incollato
             st.rerun()
         
-        # ---------------------------
-        
-        # Recuperiamo il testo che è stato "elaborato"
-        testo_da_analizzare = st.session_state.get("testo_dettato_elaborato", "")
+        testo_da_analizzare = st.session_state.get("testo_da_analizzare_man", "")
         
         col1, col2 = st.columns(2)
         data_m = col1.date_input("Data", datetime.date.today(), key="data_manodopera")
         
-        # Logica di auto-selezione del cantiere
         cantiere_index = 0
         if testo_da_analizzare:
             for i, c in enumerate(cantieri['indirizzo'].tolist()):
@@ -343,7 +380,6 @@ def page_costi():
         if not operai.empty:
             col3, col4 = st.columns(2)
             
-            # Logica di auto-selezione dell'operaio
             operaio_index = 0
             if testo_da_analizzare:
                 for i, o in enumerate(operai['nome'].tolist()):
@@ -355,10 +391,8 @@ def page_costi():
             costo_standard = operai[operai['nome'] == operaio_sel]['costo_orario'].values[0]
             costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=float(costo_standard), key="costo_orario")
             
-            # Logica di auto-compilazione delle ore
             ore_default = 0.0
             if testo_da_analizzare:
-                import re
                 numeri_trovati = re.findall(r'\d+', testo_da_analizzare)
                 if numeri_trovati:
                     ore_default = float(numeri_trovati[0])
@@ -371,9 +405,8 @@ def page_costi():
                 c.execute("INSERT INTO costo_manodopera (data, cantiere_id, operaio, ore, costo_orario, totale) VALUES (?,?,?,?,?,?)", 
                           (str(data_m), cantiere_m, operaio_sel, ore, costo_orario, totale))
                 conn.commit(); conn.close(); 
-                # Pulisce la memoria per il prossimo inserimento
-                st.session_state["testo_dettato"] = ""
-                st.session_state["testo_dettato_elaborato"] = ""
+                st.session_state["testo_da_analizzare_man"] = ""
+                st.session_state["testo_incollato_man"] = ""
                 st.success("Costo manodopera registrato!"); st.rerun()
         else:
             st.info("Nessun operaio in anagrafica.")
@@ -495,6 +528,79 @@ def page_costi():
     st.divider()
     st.subheader("📋 Elenco Costi Registrati")
     st.dataframe(df_costi, use_container_width=True)
+
+def page_incassi():
+    st.title("💰 Gestione Incassi")
+    cantieri = get_cantieri()
+    if cantieri.empty:
+        st.warning("Devi prima creare un cantiere!")
+        return
+
+    with st.expander("➕ Registra Nuovo Incasso"):
+        with st.form("nuovo_incasso", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            data_i = col1.date_input("Data Fattura", datetime.date.today(), key="data_incasso")
+            cantiere_i = col2.selectbox("Cantiere", cantieri['id'].tolist(), format_func=lambda x: cantieri[cantieri['id']==x]['indirizzo'].values[0], key="cant_incasso")
+            
+            col3, col4, col5 = st.columns(3)
+            fattura = col3.text_input("N. Fattura", key="num_fattura")
+            imponibile = col4.number_input("Imponibile (€)", min_value=0.0, step=100.0, key="imp_incasso")
+            iva = col5.number_input("Aliquota IVA (%)", min_value=0.0, value=22.0, step=1.0, key="iva_incasso")
+            
+            if st.form_submit_button("Salva Incasso"):
+                totale = imponibile + (imponibile * iva / 100)
+                conn = get_connection(); c = conn.cursor()
+                c.execute("INSERT INTO incassi (data, cantiere_id, fattura, imponibile, iva, totale) VALUES (?,?,?,?,?,?)", 
+                          (str(data_i), cantiere_i, fattura, imponibile, iva, totale))
+                conn.commit(); conn.close(); st.success("Incasso registrato!"); st.rerun()
+
+    st.divider()
+    conn = get_connection()
+    df = pd.read_sql_query("""
+        SELECT i.id, i.data, p.indirizzo as Cantiere, i.fattura, i.imponibile, i.iva, i.totale 
+        FROM incassi i JOIN preventivi p ON i.cantiere_id = p.id
+    """, conn)
+    conn.close()
+    st.dataframe(df, use_container_width=True)
+
+    if not df.empty:
+        st.subheader("Elimina Incasso")
+        incasso_sel = st.selectbox("Seleziona Incasso", df['id'].tolist(), format_func=lambda x: f"ID {x} - {df[df['id']==x]['fattura'].values[0]} - €{df[df['id']==x]['totale'].values[0]}", key="sel_incasso")
+        if st.button("Elimina Incasso Selezionato", type="primary", key="btn_elimina_incasso"):
+            conn = get_connection(); c = conn.cursor()
+            c.execute("DELETE FROM incassi WHERE id=?", (incasso_sel,))
+            conn.commit(); conn.close(); st.success("Incasso eliminato!"); st.rerun()
+
+def page_avanzamento():
+    st.title("📈 Avanzamento Lavori (SAL)")
+    cantieri = get_cantieri()
+    if cantieri.empty:
+        st.warning("Devi prima creare un cantiere!")
+        return
+
+    with st.expander("➕ Registra Nuovo SAL"):
+        with st.form("nuovo_sal", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            data_s = col1.date_input("Data SAL", datetime.date.today(), key="data_sal")
+            cantiere_s = col2.selectbox("Cantiere", cantieri['id'].tolist(), format_func=lambda x: cantieri[cantieri['id']==x]['indirizzo'].values[0], key="cant_sal")
+            
+            descrizione = st.text_input("Descrizione Lavori", key="desc_sal")
+            importo = st.number_input("Importo Realizzato (€)", min_value=0.0, step=100.0, key="imp_sal")
+            
+            if st.form_submit_button("Salva SAL"):
+                conn = get_connection(); c = conn.cursor()
+                c.execute("INSERT INTO avanzamento (data, cantiere_id, descrizione, importo) VALUES (?,?,?,?)", 
+                          (str(data_s), cantiere_s, descrizione, importo))
+                conn.commit(); conn.close(); st.success("SAL registrato!"); st.rerun()
+
+    st.divider()
+    conn = get_connection()
+    df = pd.read_sql_query("""
+        SELECT a.id, a.data, p.indirizzo as Cantiere, a.descrizione, a.importo 
+        FROM avanzamento a JOIN preventivi p ON a.cantiere_id = p.id
+    """, conn)
+    conn.close()
+    st.dataframe(df, use_container_width=True)
 
 def page_riepilogo():
     st.title("📊 Riepilogo e Grafici")
