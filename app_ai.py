@@ -6,6 +6,7 @@ import hashlib
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from st_chat_input_multimodal import multimodal_chat_input
 
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Gestionale Cantieri", page_icon="🏗️", layout="wide")
@@ -302,6 +303,26 @@ def page_costi():
             
             costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=float(costo_standard), key="costo_orario")
             ore = st.number_input("Ore Lavorate", min_value=0.0, step=0.5, key="ore_lavorate")
+
+           st.markdown("---")
+            st.caption("🎤 Prova l'inserimento vocale (sperimentale)")
+            
+            # Componente per l'input vocale
+            voice_result = multimodal_chat_input(
+                placeholder="Premi il microfono e parla...",
+                enable_voice_input=True,
+                voice_recognition_method="web_speech",
+                voice_language="it-IT",
+                key="voice_input_costi"
+            )
+            
+            # Se il risultato contiene del testo, lo mostriamo in un'area modificabile
+            if voice_result and voice_result.get("text"):
+                testo_riconosciuto = st.text_area(
+                    "Testo riconosciuto (puoi modificarlo):", 
+                    value=voice_result["text"],
+                    key="testo_vocale"
+                ) 
             
             if st.button("Salva Costo Manodopera", type="primary", key="btn_salva_manodopera"):
                 totale = ore * costo_orario
