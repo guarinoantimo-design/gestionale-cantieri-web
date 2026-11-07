@@ -12,7 +12,7 @@ import os
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Gestionale Cantieri", page_icon="🏗️", layout="wide")
 
-DB_NAME = "gestionale_web.db"
+DB_NAME = "gestionale_web_v2.db"
 
 # --- FUNZIONI DATABASE ---
 def get_connection():
