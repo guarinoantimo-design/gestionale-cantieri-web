@@ -99,22 +99,59 @@ def get_fornitori():
 # --- PAGINE ---
 def page_home():
     st.title("🏠 Home")
-    st.write("Benvenuto nel Gestionale. Seleziona una sezione.")
+    st.write("Benvenuto nel Gestionale. Ecco la situazione attuale della tua azienda.")
     
-    col1, col2 = st.columns(2)
+    # --- CALCOLO DEI TOTALI (Solo Cantieri Attivi) ---
+    conn = get_connection()
+    
+    # Query per i numeri
+    query_totali = """
+        SELECT 
+            (SELECT COUNT(*) FROM preventivi WHERE stato = 'Attivo') as num_cantieri,
+            (SELECT SUM(totale) FROM incassi i JOIN preventivi p ON i.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_incassi,
+            (SELECT SUM(totale) FROM costo_manodopera c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_costi_man,
+            (SELECT SUM(totale) FROM costo_materiali c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_costi_mat
+    """
+    res = pd.read_sql_query(query_totali, conn).iloc[0]
+    conn.close()
+    
+    num_cantieri = res['num_cantieri'] or 0
+    tot_incassi = res['tot_incassi'] or 0
+    tot_costi = (res['tot_costi_man'] or 0) + (res['tot_costi_mat'] or 0)
+    saldo = tot_incassi - tot_costi
+    
+    # --- RIQUADRI METRICHE ---
+    col1, col2, col3, col4 = st.columns(4)
+    
     with col1:
-        # Aggiunto 'key' univoco per evitare conflitti
+        st.metric(label="🏗️ Cantieri Attivi", value=num_cantieri)
+    with col2:
+        st.metric(label="💰 Incassi Totali", value=f"€ {tot_incassi:,.2f}")
+    with col3:
+        st.metric(label="📉 Costi Totali", value=f"€ {tot_costi:,.2f}", delta_color="inverse")
+    with col4:
+        # Il saldo può essere positivo (verde) o negativo (rosso)
+        st.metric(label="⚖️ Saldo", value=f"€ {saldo:,.2f}", delta_color="normal" if saldo >= 0 else "inverse")
+    
+    st.divider()
+    
+    # --- ACCESSI RAPIDI ---
+    st.subheader("🚀 Accessi Rapidi")
+    st.write("Seleziona una sezione per iniziare a lavorare.")
+    
+    col_btn1, col_btn2 = st.columns(2)
+    with col_btn1:
         if st.button("📋 Gestione Cantieri", use_container_width=True, key="home_btn_cantieri"):
             st.session_state.current_page = "Cantieri"; st.rerun()
         if st.button("📉 Inserimento Costi", use_container_width=True, key="home_btn_costi"):
             st.session_state.current_page = "Costi"; st.rerun()
-    with col2:
+        if st.button("📈 Avanzamento", use_container_width=True, key="home_btn_avanzamento"):
+            st.session_state.current_page = "Avanzamento"; st.rerun()
+    with col_btn2:
         if st.button("👥 Anagrafiche", use_container_width=True, key="home_btn_anagrafiche"):
             st.session_state.current_page = "Anagrafiche"; st.rerun()
         if st.button("💰 Incassi", use_container_width=True, key="home_btn_incassi"):
             st.session_state.current_page = "Incassi"; st.rerun()
-        if st.button("📈 Avanzamento", use_container_width=True, key="home_btn_avanzamento"):
-            st.session_state.current_page = "Avanzamento"; st.rerun()
         if st.button("📊 Riepilogo", use_container_width=True, key="home_btn_riepilogo"):
             st.session_state.current_page = "Riepilogo"; st.rerun()
 
