@@ -465,7 +465,6 @@ def page_costi():
                         st.session_state.costo_da_modificare = None
                         st.success("Costo eliminato!"); st.rerun()
             
-            # Pulsante per annullare la modifica
             if st.button("Annulla Modifica", key="btn_annulla_modifica"):
                 st.session_state.modifica_costo_attiva = False
                 st.session_state.costo_da_modificare = None
@@ -473,37 +472,77 @@ def page_costi():
             
         st.divider()
 
-    # --- ELENCO COSTI CON PULSANTI DI MODIFICA ---
+    # --- ELENCO COSTI CON FILTRI E PULSANTI DI MODIFICA ---
     st.subheader("📋 Elenco Costi Registrati")
     
+    # --- SEZIONE FILTRI ---
+    with st.expander("🔍 Filtra i costi", expanded=True):
+        col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+        
+        # Filtro 1: Ricerca testo libero
+        filtro_testo = col_f1.text_input("Cerca (Operaio/Fornitore/Cantiere)", placeholder="Scrivi qui...")
+        
+        # Filtro 2: Tipo di costo
+        filtro_tipo = col_f2.selectbox("Tipo di costo", ["Tutti", "Manodopera", "Materiale"])
+        
+        # Filtro 3 e 4: Intervallo date
+        # Usiamo una data di default molto vecchia e molto futura per includere tutto
+        data_inizio = col_f3.date_input("Dal", value=datetime.date(2000, 1, 1))
+        data_fine = col_f4.date_input("Al", value=datetime.date.today())
+    
+    # --- RECUPERO DATI CON FILTRI ---
     conn = get_connection()
-    query = """
-        SELECT 'M-' || id as ID_Unico, 'Manodopera' as Tipo, data, (SELECT indirizzo FROM preventivi WHERE id = cantiere_id) as Cantiere, operaio as Descrizione, totale as Totale
+    
+    # Costruiamo la query in base ai filtri
+    query_man = f"""
+        SELECT 'M-' || id as ID_Unico, 'Manodopera' as Tipo, data, 
+               (SELECT indirizzo FROM preventivi WHERE id = cantiere_id) as Cantiere, 
+               operaio as Descrizione, totale as Totale
         FROM costo_manodopera
-        UNION ALL
-        SELECT 'Mat-' || id as ID_Unico, 'Materiale' as Tipo, data, (SELECT indirizzo FROM preventivi WHERE id = cantiere_id) as Cantiere, fornitore as Descrizione, totale as Totale
-        FROM costo_materiali
-        ORDER BY data DESC
+        WHERE data >= '{data_inizio}' AND data <= '{data_fine}'
     """
+    query_mat = f"""
+        SELECT 'Mat-' || id as ID_Unico, 'Materiale' as Tipo, data, 
+               (SELECT indirizzo FROM preventivi WHERE id = cantiere_id) as Cantiere, 
+               fornitore as Descrizione, totale as Totale
+        FROM costo_materiali
+        WHERE data >= '{data_inizio}' AND data <= '{data_fine}'
+    """
+    
+    if filtro_tipo == "Manodopera":
+        query = query_man
+    elif filtro_tipo == "Materiale":
+        query = query_mat
+    else:
+        query = query_man + " UNION ALL " + query_mat
+    
+    query += " ORDER BY data DESC"
+    
     df_costi = pd.read_sql_query(query, conn)
     conn.close()
     
+    # Applichiamo il filtro testo (in Python, per semplicità)
+    if filtro_testo and not df_costi.empty:
+        mask = (
+            df_costi['Cantiere'].str.contains(filtro_testo, case=False, na=False) |
+            df_costi['Descrizione'].str.contains(filtro_testo, case=False, na=False)
+        )
+        df_costi = df_costi[mask]
+    
+    # --- VISUALIZZAZIONE RISULTATI ---
     if df_costi.empty:
-        st.info("Nessun costo registrato finora.")
+        st.info("Nessun costo trovato con i filtri selezionati.")
     else:
         df_costi.columns = [c.capitalize() for c in df_costi.columns]
         
-        # Mostriamo la tabella con una colonna extra per i pulsanti
-        # Usiamo un approccio a righe per poter mettere il pulsante accanto a ogni costo
+        # Mostriamo i risultati con i pulsanti di modifica
         for index, row in df_costi.iterrows():
             col_dati, col_btn = st.columns([8, 2])
             
             with col_dati:
-                # Formattiamo la riga in modo leggibile
                 st.markdown(f"**{row['Tipo']}** | {row['Data']} | {row['Cantiere']} | {row['Descrizione']} | **€ {row['Totale']:,.2f}**")
             
             with col_btn:
-                # Pulsante univoco per ogni riga
                 if st.button("✏️ Modifica", key=f"mod_{row['Id_unico']}"):
                     st.session_state.modifica_costo_attiva = True
                     st.session_state.costo_da_modificare = row['Id_unico']
