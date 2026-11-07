@@ -304,24 +304,63 @@ def page_costi():
             costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=float(costo_standard), key="costo_orario")
             ore = st.number_input("Ore Lavorate", min_value=0.0, step=0.5, key="ore_lavorate")
             
-            # --- ESPERIMENTO VOCALE ---
+            # --- INIZIO ESPERIMENTO VOCALE SEMPLIFICATO ---
             st.markdown("---")
-            st.caption("🎤 Prova l'inserimento vocale (sperimentale)")
+            st.caption("🎤 Prova il riconoscimento vocale (sperimentale)")
             
-            voice_result = multimodal_chat_input(
-                placeholder="Premi il microfono e parla...",
-                enable_voice_input=True,
-                voice_recognition_method="web_speech",
-                voice_language="it-IT",
-                key="voice_input_costi"
-            )
-            
-            if voice_result and voice_result.get("text"):
-                st.text_area(
-                    "Testo riconosciuto (puoi modificarlo):", 
-                    value=voice_result["text"],
-                    key="testo_vocale"
-                )
+            # Componente HTML/JS personalizzato per il microfono
+            voice_html = """
+            <div id="voice-container">
+                <button id="start-record" style="background-color: #27AE60; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px;">
+                    🎤 Inizia a Parlare
+                </button>
+                <p id="status" style="margin-top: 10px; font-style: italic; color: #7F8C8D;">Premi il pulsante e parla...</p>
+                <textarea id="result" rows="3" style="width: 100%; margin-top: 10px; padding: 10px; border-radius: 5px; border: 1px solid #BDC3C7;" placeholder="Il testo riconosciuto apparirà qui..."></textarea>
+            </div>
+            <script>
+                const startBtn = document.getElementById('start-record');
+                const status = document.getElementById('status');
+                const resultArea = document.getElementById('result');
+                
+                // Verifica se il browser supporta l'API
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                
+                if (!SpeechRecognition) {
+                    status.innerText = "Il tuo browser non supporta il riconoscimento vocale. Usa Chrome o Edge.";
+                } else {
+                    const recognition = new SpeechRecognition();
+                    recognition.lang = 'it-IT';
+                    recognition.interimResults = false;
+                    recognition.maxAlternatives = 1;
+                    
+                    startBtn.addEventListener('click', () => {
+                        recognition.start();
+                        status.innerText = "In ascolto...";
+                        startBtn.disabled = true;
+                    });
+                    
+                    recognition.addEventListener('result', (event) => {
+                        const transcript = event.results[0][0].transcript;
+                        resultArea.value = transcript;
+                        status.innerText = "Riconoscimento completato!";
+                        startBtn.disabled = false;
+                    });
+                    
+                    recognition.addEventListener('error', (event) => {
+                        status.innerText = "Errore: " + event.error + ". Controlla i permessi del microfono.";
+                        startBtn.disabled = false;
+                    });
+                    
+                    recognition.addEventListener('end', () => {
+                        if (status.innerText === "In ascolto...") {
+                            status.innerText = "Nessun parlato rilevato. Riprova.";
+                            startBtn.disabled = false;
+                        }
+                    });
+                }
+            </script>
+            """
+            st.components.v1.html(voice_html, height=250)
             # --- FINE ESPERIMENTO VOCALE ---
             
             if st.button("Salva Costo Manodopera", type="primary", key="btn_salva_manodopera"):
@@ -350,13 +389,11 @@ def page_costi():
                 iva = col6.number_input("Aliquota IVA (%)", min_value=0.0, value=22.0, step=1.0, key="iva_materiale")
             else:
                 st.info("Nessun fornitore in anagrafica. Aggiungine uno per poter registrare i materiali.")
-                # Variabili fittizie per evitare errori nel salvataggio
                 fornitore_sel = None
                 documento = ""
                 imponibile = 0.0
                 iva = 0.0
 
-            # Il pulsante è FUORI dall'if, così è sempre visibile
             if st.form_submit_button("Salva Costo Materiale"):
                 if fornitore_sel:
                     totale = imponibile + (imponibile * iva / 100)
