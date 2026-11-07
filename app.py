@@ -3,11 +3,9 @@ import sqlite3
 import pandas as pd
 import datetime
 import hashlib
-import matplotlib.pyplot as plt
 import matplotlib
-
-# Configurazione per evitare problemi con i thread di Streamlit
 matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Gestionale Cantieri", page_icon="🏗️", layout="wide")
@@ -35,7 +33,6 @@ def init_db():
     c.execute("CREATE TABLE IF NOT EXISTS fornitori (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, piva TEXT, contatto TEXT)")
     c.execute("CREATE TABLE IF NOT EXISTS costo_manodopera (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, operaio TEXT, ore REAL, costo_orario REAL, totale REAL)")
     c.execute("CREATE TABLE IF NOT EXISTS costo_materiali (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, fornitore TEXT, documento TEXT, imponibile REAL, iva REAL, totale REAL)")
-    # NUOVE TABELLE FASE 3
     c.execute("CREATE TABLE IF NOT EXISTS incassi (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, fattura TEXT, imponibile REAL, iva REAL, totale REAL)")
     c.execute("CREATE TABLE IF NOT EXISTS avanzamento (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, descrizione TEXT, importo REAL)")
     
@@ -102,23 +99,23 @@ def get_fornitori():
 # --- PAGINE ---
 def page_home():
     st.title("🏠 Home")
-    st.write("Benvenuto nel Gestionale. Seleziona una sezione dal menu laterale.")
+    st.write("Benvenuto nel Gestionale. Seleziona una sezione.")
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     with col1:
-        if st.button("📋 Gestione Cantieri", use_container_width=True):
+        # Aggiunto 'key' univoco per evitare conflitti
+        if st.button("📋 Gestione Cantieri", use_container_width=True, key="home_btn_cantieri"):
             st.session_state.current_page = "Cantieri"; st.rerun()
-        if st.button("📉 Inserimento Costi", use_container_width=True):
+        if st.button("📉 Inserimento Costi", use_container_width=True, key="home_btn_costi"):
             st.session_state.current_page = "Costi"; st.rerun()
     with col2:
-        if st.button("👥 Anagrafiche", use_container_width=True):
+        if st.button("👥 Anagrafiche", use_container_width=True, key="home_btn_anagrafiche"):
             st.session_state.current_page = "Anagrafiche"; st.rerun()
-        if st.button("💰 Incassi", use_container_width=True):
+        if st.button("💰 Incassi", use_container_width=True, key="home_btn_incassi"):
             st.session_state.current_page = "Incassi"; st.rerun()
-    with col3:
-        if st.button("📈 Avanzamento", use_container_width=True):
+        if st.button("📈 Avanzamento", use_container_width=True, key="home_btn_avanzamento"):
             st.session_state.current_page = "Avanzamento"; st.rerun()
-        if st.button("📊 Riepilogo", use_container_width=True):
+        if st.button("📊 Riepilogo", use_container_width=True, key="home_btn_riepilogo"):
             st.session_state.current_page = "Riepilogo"; st.rerun()
 
 def page_cantieri():
@@ -157,30 +154,30 @@ def page_cantieri():
         st.dataframe(df, use_container_width=True)
         
         st.subheader("Gestisci Cantiere Selezionato")
-        cantiere_sel = st.selectbox("Seleziona Cantiere:", df['id'].tolist(), format_func=lambda x: f"ID {x} - {df[df['id']==x]['indirizzo'].values[0]}")
+        cantiere_sel = st.selectbox("Seleziona Cantiere:", df['id'].tolist(), format_func=lambda x: f"ID {x} - {df[df['id']==x]['indirizzo'].values[0]}", key="sel_cantiere")
         
         cantiere_data = df[df['id'] == cantiere_sel].iloc[0]
         
         col_az1, col_az2 = st.columns(2)
         
         if cantiere_data['stato'] == 'Attivo':
-            if col_az1.button("🔴 Chiudi Cantiere", use_container_width=True):
+            if col_az1.button("🔴 Chiudi Cantiere", use_container_width=True, key="btn_chiudi_cant"):
                 conn = get_connection(); c = conn.cursor()
                 c.execute("UPDATE preventivi SET stato='Chiuso' WHERE id=?", (cantiere_sel,))
                 conn.commit(); conn.close(); st.rerun()
         else:
-            if col_az1.button("🟢 Riapri Cantiere", use_container_width=True):
+            if col_az1.button("🟢 Riapri Cantiere", use_container_width=True, key="btn_riapri_cant"):
                 conn = get_connection(); c = conn.cursor()
                 c.execute("UPDATE preventivi SET stato='Attivo' WHERE id=?", (cantiere_sel,))
                 conn.commit(); conn.close(); st.rerun()
         
         with col_az2:
-            if st.button("🗑️ Elimina Cantiere", type="primary", use_container_width=True):
+            if st.button("🗑️ Elimina Cantiere", type="primary", use_container_width=True, key="btn_elimina_cant"):
                 st.session_state.confirm_delete_cantiere = True
         
         if st.session_state.get('confirm_delete_cantiere'):
             st.warning("Sei sicuro? Questa azione è irreversibile.")
-            if st.button("Sì, elimina definitivamente"):
+            if st.button("Sì, elimina definitivamente", key="btn_conferma_elimina_cant"):
                 conn = get_connection(); c = conn.cursor()
                 c.execute("DELETE FROM preventivi WHERE id=?", (cantiere_sel,))
                 conn.commit(); conn.close()
@@ -224,7 +221,7 @@ def page_anagrafiche():
         
         if not df_op.empty:
             st.subheader("Gestisci Operaio")
-            op_sel = st.selectbox("Seleziona Operaio", df_op['nome'].tolist())
+            op_sel = st.selectbox("Seleziona Operaio", df_op['nome'].tolist(), key="sel_operaio")
             op_data = df_op[df_op['nome'] == op_sel].iloc[0]
             
             col1, col2 = st.columns(2)
@@ -237,7 +234,7 @@ def page_anagrafiche():
                         c.execute("UPDATE operai SET ruolo=?, costo_orario=? WHERE nome=?", (new_ruolo, new_costo, op_sel))
                         conn.commit(); conn.close(); st.success("Modifiche salvate!"); st.rerun()
             with col2:
-                if st.button("Elimina Operaio", type="primary"):
+                if st.button("Elimina Operaio", type="primary", key="btn_elimina_operaio"):
                     conn = get_connection(); c = conn.cursor()
                     c.execute("DELETE FROM operai WHERE nome=?", (op_sel,))
                     conn.commit(); conn.close(); st.success("Operaio eliminato!"); st.rerun()
@@ -261,7 +258,7 @@ def page_anagrafiche():
         
         if not df_forn.empty:
             st.subheader("Gestisci Fornitore")
-            forn_sel = st.selectbox("Seleziona Fornitore", df_forn['nome'].tolist())
+            forn_sel = st.selectbox("Seleziona Fornitore", df_forn['nome'].tolist(), key="sel_fornitore")
             forn_data = df_forn[df_forn['nome'] == forn_sel].iloc[0]
             
             col1, col2 = st.columns(2)
@@ -274,7 +271,7 @@ def page_anagrafiche():
                         c.execute("UPDATE fornitori SET piva=?, contatto=? WHERE nome=?", (new_piva, new_contatto, forn_sel))
                         conn.commit(); conn.close(); st.success("Modifiche salvate!"); st.rerun()
             with col2:
-                if st.button("Elimina Fornitore", type="primary"):
+                if st.button("Elimina Fornitore", type="primary", key="btn_elimina_fornitore"):
                     conn = get_connection(); c = conn.cursor()
                     c.execute("DELETE FROM fornitori WHERE nome=?", (forn_sel,))
                     conn.commit(); conn.close(); st.success("Fornitore eliminato!"); st.rerun()
@@ -295,18 +292,18 @@ def page_costi():
     with tab1:
         st.subheader("Registra Ore Lavorate")
         col1, col2 = st.columns(2)
-        data_m = col1.date_input("Data", datetime.date.today())
-        cantiere_m = col2.selectbox("Cantiere", cantieri['id'].tolist(), format_func=lambda x: cantieri[cantieri['id']==x]['indirizzo'].values[0])
+        data_m = col1.date_input("Data", datetime.date.today(), key="data_manodopera")
+        cantiere_m = col2.selectbox("Cantiere", cantieri['id'].tolist(), format_func=lambda x: cantieri[cantieri['id']==x]['indirizzo'].values[0], key="cant_manodopera")
         
         if not operai.empty:
             col3, col4 = st.columns(2)
-            operaio_sel = col3.selectbox("Operaio", operai['nome'].tolist())
+            operaio_sel = col3.selectbox("Operaio", operai['nome'].tolist(), key="op_manodopera")
             costo_standard = operai[operai['nome'] == operaio_sel]['costo_orario'].values[0]
             
-            costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=float(costo_standard))
-            ore = st.number_input("Ore Lavorate", min_value=0.0, step=0.5)
+            costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=float(costo_standard), key="costo_orario")
+            ore = st.number_input("Ore Lavorate", min_value=0.0, step=0.5, key="ore_lavorate")
             
-            if st.button("Salva Costo Manodopera", type="primary"):
+            if st.button("Salva Costo Manodopera", type="primary", key="btn_salva_manodopera"):
                 totale = ore * costo_orario
                 conn = get_connection(); c = conn.cursor()
                 c.execute("INSERT INTO costo_manodopera (data, cantiere_id, operaio, ore, costo_orario, totale) VALUES (?,?,?,?,?,?)", 
@@ -319,17 +316,17 @@ def page_costi():
         with st.form("form_materiali", clear_on_submit=True):
             st.subheader("Registra Acquisto Materiale")
             col1, col2 = st.columns(2)
-            data_mat = col1.date_input("Data", datetime.date.today())
-            cantiere_mat = col2.selectbox("Cantiere", cantieri['id'].tolist(), format_func=lambda x: cantieri[cantieri['id']==x]['indirizzo'].values[0])
+            data_mat = col1.date_input("Data", datetime.date.today(), key="data_materiale")
+            cantiere_mat = col2.selectbox("Cantiere", cantieri['id'].tolist(), format_func=lambda x: cantieri[cantieri['id']==x]['indirizzo'].values[0], key="cant_materiale")
             
             if not fornitori.empty:
                 col3, col4 = st.columns(2)
-                fornitore_sel = col3.selectbox("Fornitore", fornitori['nome'].tolist())
-                documento = col4.text_input("N. Documento / Fattura")
+                fornitore_sel = col3.selectbox("Fornitore", fornitori['nome'].tolist(), key="fornitore_materiale")
+                documento = col4.text_input("N. Documento / Fattura", key="documento_materiale")
                 
                 col5, col6 = st.columns(2)
-                imponibile = col5.number_input("Imponibile (€)", min_value=0.0, step=10.0)
-                iva = col6.number_input("Aliquota IVA (%)", min_value=0.0, value=22.0, step=1.0)
+                imponibile = col5.number_input("Imponibile (€)", min_value=0.0, step=10.0, key="imponibile")
+                iva = col6.number_input("Aliquota IVA (%)", min_value=0.0, value=22.0, step=1.0, key="iva_materiale")
                 
                 if st.form_submit_button("Salva Costo Materiale"):
                     totale = imponibile + (imponibile * iva / 100)
@@ -359,7 +356,7 @@ def page_costi():
     
     if not df_costi.empty:
         costi_list = [f"{row['Id_unico']} - {row['Data']} - {row['Descrizione']} - €{row['Totale']}" for _, row in df_costi.iterrows()]
-        costo_sel_str = st.selectbox("Seleziona un costo da gestire:", costi_list)
+        costo_sel_str = st.selectbox("Seleziona un costo da gestire:", costi_list, key="sel_costo_da_gestire")
         
         id_unico = costo_sel_str.split(" - ")[0]
         
@@ -373,9 +370,9 @@ def page_costi():
             with st.form("modifica_manodopera"):
                 st.write("Dettagli Manodopera")
                 col1, col2 = st.columns(2)
-                m_data = col1.date_input("Data", pd.to_datetime(row['data']).date())
-                m_ore = col2.number_input("Ore Lavorate", value=float(row['ore']), step=0.5)
-                m_costo = st.number_input("Costo Orario (€)", value=float(row['costo_orario']), step=1.0)
+                m_data = col1.date_input("Data", pd.to_datetime(row['data']).date(), key="mod_data_man")
+                m_ore = col2.number_input("Ore Lavorate", value=float(row['ore']), step=0.5, key="mod_ore_man")
+                m_costo = st.number_input("Costo Orario (€)", value=float(row['costo_orario']), step=1.0, key="mod_costo_man")
                 
                 col_btn1, col_btn2 = st.columns(2)
                 if col_btn1.form_submit_button("Salva Modifiche"):
@@ -400,12 +397,12 @@ def page_costi():
             with st.form("modifica_materiali"):
                 st.write("Dettagli Materiale")
                 col1, col2 = st.columns(2)
-                m_data = col1.date_input("Data", pd.to_datetime(row['data']).date())
-                m_doc = col2.text_input("N. Documento", value=row['documento'])
+                m_data = col1.date_input("Data", pd.to_datetime(row['data']).date(), key="mod_data_mat")
+                m_doc = col2.text_input("N. Documento", value=row['documento'], key="mod_doc_mat")
                 
                 col3, col4 = st.columns(2)
-                m_imp = col3.number_input("Imponibile (€)", value=float(row['imponibile']), step=10.0)
-                m_iva = col4.number_input("Aliquota IVA (%)", value=float(row['iva']), step=1.0)
+                m_imp = col3.number_input("Imponibile (€)", value=float(row['imponibile']), step=10.0, key="mod_imp_mat")
+                m_iva = col4.number_input("Aliquota IVA (%)", value=float(row['iva']), step=1.0, key="mod_iva_mat")
                 
                 col_btn1, col_btn2 = st.columns(2)
                 if col_btn1.form_submit_button("Salva Modifiche"):
@@ -426,7 +423,6 @@ def page_costi():
     st.subheader("📋 Elenco Costi Registrati")
     st.dataframe(df_costi, use_container_width=True)
 
-# --- NUOVE PAGINE FASE 3 ---
 def page_incassi():
     st.title("💰 Gestione Incassi")
     cantieri = get_cantieri()
@@ -437,13 +433,13 @@ def page_incassi():
     with st.expander("➕ Registra Nuovo Incasso"):
         with st.form("nuovo_incasso", clear_on_submit=True):
             col1, col2 = st.columns(2)
-            data_i = col1.date_input("Data Fattura", datetime.date.today())
-            cantiere_i = col2.selectbox("Cantiere", cantieri['id'].tolist(), format_func=lambda x: cantieri[cantieri['id']==x]['indirizzo'].values[0])
+            data_i = col1.date_input("Data Fattura", datetime.date.today(), key="data_incasso")
+            cantiere_i = col2.selectbox("Cantiere", cantieri['id'].tolist(), format_func=lambda x: cantieri[cantieri['id']==x]['indirizzo'].values[0], key="cant_incasso")
             
             col3, col4, col5 = st.columns(3)
-            fattura = col3.text_input("N. Fattura")
-            imponibile = col4.number_input("Imponibile (€)", min_value=0.0, step=100.0)
-            iva = col5.number_input("Aliquota IVA (%)", min_value=0.0, value=22.0, step=1.0)
+            fattura = col3.text_input("N. Fattura", key="num_fattura")
+            imponibile = col4.number_input("Imponibile (€)", min_value=0.0, step=100.0, key="imp_incasso")
+            iva = col5.number_input("Aliquota IVA (%)", min_value=0.0, value=22.0, step=1.0, key="iva_incasso")
             
             if st.form_submit_button("Salva Incasso"):
                 totale = imponibile + (imponibile * iva / 100)
@@ -463,8 +459,8 @@ def page_incassi():
 
     if not df.empty:
         st.subheader("Elimina Incasso")
-        incasso_sel = st.selectbox("Seleziona Incasso", df['id'].tolist(), format_func=lambda x: f"ID {x} - {df[df['id']==x]['fattura'].values[0]} - €{df[df['id']==x]['totale'].values[0]}")
-        if st.button("Elimina Incasso Selezionato", type="primary"):
+        incasso_sel = st.selectbox("Seleziona Incasso", df['id'].tolist(), format_func=lambda x: f"ID {x} - {df[df['id']==x]['fattura'].values[0]} - €{df[df['id']==x]['totale'].values[0]}", key="sel_incasso")
+        if st.button("Elimina Incasso Selezionato", type="primary", key="btn_elimina_incasso"):
             conn = get_connection(); c = conn.cursor()
             c.execute("DELETE FROM incassi WHERE id=?", (incasso_sel,))
             conn.commit(); conn.close(); st.success("Incasso eliminato!"); st.rerun()
@@ -479,11 +475,11 @@ def page_avanzamento():
     with st.expander("➕ Registra Nuovo SAL"):
         with st.form("nuovo_sal", clear_on_submit=True):
             col1, col2 = st.columns(2)
-            data_s = col1.date_input("Data SAL", datetime.date.today())
-            cantiere_s = col2.selectbox("Cantiere", cantieri['id'].tolist(), format_func=lambda x: cantieri[cantieri['id']==x]['indirizzo'].values[0])
+            data_s = col1.date_input("Data SAL", datetime.date.today(), key="data_sal")
+            cantiere_s = col2.selectbox("Cantiere", cantieri['id'].tolist(), format_func=lambda x: cantieri[cantieri['id']==x]['indirizzo'].values[0], key="cant_sal")
             
-            descrizione = st.text_input("Descrizione Lavori")
-            importo = st.number_input("Importo Realizzato (€)", min_value=0.0, step=100.0)
+            descrizione = st.text_input("Descrizione Lavori", key="desc_sal")
+            importo = st.number_input("Importo Realizzato (€)", min_value=0.0, step=100.0, key="imp_sal")
             
             if st.form_submit_button("Salva SAL"):
                 conn = get_connection(); c = conn.cursor()
@@ -505,7 +501,6 @@ def page_riepilogo():
     
     conn = get_connection()
     
-    # 1. Totali Aziendali (Solo Cantieri Attivi)
     query_totali = """
         SELECT 
             (SELECT SUM(importo_contratto) FROM preventivi WHERE stato = 'Attivo') as tot_contratti,
@@ -529,7 +524,6 @@ def page_riepilogo():
     
     st.divider()
 
-    # 2. Dettaglio e Grafico
     st.markdown("### 🔍 Dettaglio Cantiere")
     df_cantieri = pd.read_sql_query("SELECT id, indirizzo FROM preventivi", conn)
     
@@ -539,10 +533,9 @@ def page_riepilogo():
         return
         
     opzioni = ["--- TUTTI I CANTIERI ATTIVI ---"] + [f"{row['id']} - {row['indirizzo']}" for _, row in df_cantieri.iterrows()]
-    scelta = st.selectbox("Seleziona Cantiere per il grafico:", opzioni)
+    scelta = st.selectbox("Seleziona Cantiere per il grafico:", opzioni, key="sel_riepilogo")
     
     if scelta == "--- TUTTI I CANTIERI ATTIVI ---":
-        # Grafico Globale
         query_incassi = "SELECT i.data, i.totale FROM incassi i JOIN preventivi p ON i.cantiere_id = p.id WHERE p.stato = 'Attivo'"
         query_costi_m = "SELECT c.data, c.totale FROM costo_manodopera c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo'"
         query_costi_mat = "SELECT c.data, c.totale FROM costo_materiali c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo'"
@@ -572,10 +565,8 @@ def page_riepilogo():
             else:
                 st.info("Nessun dato disponibile.")
     else:
-        # Grafico Singolo
         cid = int(scelta.split(" - ")[0])
         
-        # Dati Cantiere
         query_dati = f"""
             SELECT 
                 p.importo_contratto,
@@ -601,7 +592,6 @@ def page_riepilogo():
         
         st.progress(min(perc_avanz / 100, 1.0))
         
-        # Grafico
         query_incassi = f"SELECT data, totale, 'Incasso' as Tipo FROM incassi WHERE cantiere_id = {cid}"
         query_costi_m = f"SELECT data, totale, 'Costo Man' as Tipo FROM costo_manodopera WHERE cantiere_id = {cid}"
         query_costi_mat = f"SELECT data, totale, 'Costo Mat' as Tipo FROM costo_materiali WHERE cantiere_id = {cid}"
@@ -632,23 +622,23 @@ else:
     with st.sidebar:
         st.markdown(f"### 👤 Utente: {st.session_state.username}")
         st.divider()
-        if st.button("🏠 Home", use_container_width=True):
+        if st.button("🏠 Home", use_container_width=True, key="sidebar_home"):
             st.session_state.current_page = "Home"; st.rerun()
-        if st.button("📋 Cantieri", use_container_width=True):
+        if st.button("📋 Cantieri", use_container_width=True, key="sidebar_cantieri"):
             st.session_state.current_page = "Cantieri"; st.rerun()
-        if st.button("👥 Anagrafiche", use_container_width=True):
+        if st.button("👥 Anagrafiche", use_container_width=True, key="sidebar_anagrafiche"):
             st.session_state.current_page = "Anagrafiche"; st.rerun()
-        if st.button("📉 Costi", use_container_width=True):
+        if st.button("📉 Costi", use_container_width=True, key="sidebar_costi"):
             st.session_state.current_page = "Costi"; st.rerun()
-        if st.button("💰 Incassi", use_container_width=True):
+        if st.button("💰 Incassi", use_container_width=True, key="sidebar_incassi"):
             st.session_state.current_page = "Incassi"; st.rerun()
-        if st.button("📈 Avanzamento", use_container_width=True):
+        if st.button("📈 Avanzamento", use_container_width=True, key="sidebar_avanzamento"):
             st.session_state.current_page = "Avanzamento"; st.rerun()
-        if st.button("📊 Riepilogo", use_container_width=True):
+        if st.button("📊 Riepilogo", use_container_width=True, key="sidebar_riepilogo"):
             st.session_state.current_page = "Riepilogo"; st.rerun()
         
         st.divider()
-        if st.button("🚪 Logout", type="primary", use_container_width=True):
+        if st.button("🚪 Logout", type="primary", use_container_width=True, key="sidebar_logout"):
             st.session_state.logged_in = False; st.rerun()
 
     if st.session_state.current_page == "Home": page_home()
