@@ -313,7 +313,6 @@ def page_anagrafiche():
                     c.execute("DELETE FROM fornitori WHERE nome=?", (forn_sel,))
                     conn.commit(); conn.close(); st.success("Fornitore eliminato!"); st.rerun()
 
-
 def page_costi():
     st.title("📉 Inserimento Costi")
     
@@ -475,25 +474,14 @@ def page_costi():
     # --- ELENCO COSTI CON FILTRI E PULSANTI DI MODIFICA ---
     st.subheader("📋 Elenco Costi Registrati")
     
-    # --- SEZIONE FILTRI ---
     with st.expander("🔍 Filtra i costi", expanded=True):
         col_f1, col_f2, col_f3, col_f4 = st.columns(4)
-        
-        # Filtro 1: Ricerca testo libero
         filtro_testo = col_f1.text_input("Cerca (Operaio/Fornitore/Cantiere)", placeholder="Scrivi qui...")
-        
-        # Filtro 2: Tipo di costo
         filtro_tipo = col_f2.selectbox("Tipo di costo", ["Tutti", "Manodopera", "Materiale"])
-        
-        # Filtro 3 e 4: Intervallo date
-        # Usiamo una data di default molto vecchia e molto futura per includere tutto
         data_inizio = col_f3.date_input("Dal", value=datetime.date(2000, 1, 1))
         data_fine = col_f4.date_input("Al", value=datetime.date.today())
     
-    # --- RECUPERO DATI CON FILTRI ---
     conn = get_connection()
-    
-    # Costruiamo la query in base ai filtri
     query_man = f"""
         SELECT 'M-' || id as ID_Unico, 'Manodopera' as Tipo, data, 
                (SELECT indirizzo FROM preventivi WHERE id = cantiere_id) as Cantiere, 
@@ -521,7 +509,6 @@ def page_costi():
     df_costi = pd.read_sql_query(query, conn)
     conn.close()
     
-    # Applichiamo il filtro testo (in Python, per semplicità)
     if filtro_testo and not df_costi.empty:
         mask = (
             df_costi['Cantiere'].str.contains(filtro_testo, case=False, na=False) |
@@ -529,24 +516,89 @@ def page_costi():
         )
         df_costi = df_costi[mask]
     
-    # --- VISUALIZZAZIONE RISULTATI ---
     if df_costi.empty:
         st.info("Nessun costo trovato con i filtri selezionati.")
     else:
         df_costi.columns = [c.capitalize() for c in df_costi.columns]
         
-        # Mostriamo i risultati con i pulsanti di modifica
+        # Mostriamo i risultati
         for index, row in df_costi.iterrows():
             col_dati, col_btn = st.columns([8, 2])
-            
             with col_dati:
                 st.markdown(f"**{row['Tipo']}** | {row['Data']} | {row['Cantiere']} | {row['Descrizione']} | **€ {row['Totale']:,.2f}**")
-            
             with col_btn:
                 if st.button("✏️ Modifica", key=f"mod_{row['Id_unico']}"):
                     st.session_state.modifica_costo_attiva = True
                     st.session_state.costo_da_modificare = row['Id_unico']
                     st.rerun()
+        
+        # --- TOTALE COMPLESSIVO DEI FILTRATI ---
+        st.divider()
+        totale_filtrato = df_costi['Totale'].sum()
+        st.markdown(f"### Totale dei costi filtrati: **€ {totale_filtrato:,.2f}**")
+        
+        # --- PULSANTE DI ESPORTAZIONE PDF ---
+        if st.button("📄 Esporta Risultati in PDF", type="primary", key="btn_export_pdf_costi"):
+            # Creazione del PDF
+            try:
+                from reportlab.lib.pagesizes import A4, landscape
+                from reportlab.pdfgen import canvas
+                from reportlab.lib import colors
+                from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+                from reportlab.lib.styles import getSampleStyleSheet
+                import os
+                
+                filename = f"Riepilogo_Costi_{datetime.date.today()}.pdf"
+                doc = SimpleDocTemplate(filename, pagesize=landscape(A4))
+                elements = []
+                styles = getSampleStyleSheet()
+                
+                # Titolo
+                elements.append(Paragraph(f"Riepilogo Costi dal {data_inizio} al {data_fine}", styles['Title']))
+                if filtro_testo:
+                    elements.append(Paragraph(f"Filtro di ricerca: '{filtro_testo}'", styles['Normal']))
+                if filtro_tipo != "Tutti":
+                    elements.append(Paragraph(f"Tipo: {filtro_tipo}", styles['Normal']))
+                elements.append(Spacer(1, 12))
+                
+                # Dati Tabella
+                data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Totale (€)"]]
+                for _, row in df_costi.iterrows():
+                    data_rows.append([
+                        row['Tipo'], row['Data'], row['Cantiere'], row['Descrizione'], f"{row['Totale']:,.2f}"
+                    ])
+                data_rows.append(["", "", "", "TOTALE GENERALE", f"€ {totale_filtrato:,.2f}"])
+                
+                # Stile Tabella
+                t = Table(data_rows, colWidths=[80, 70, 200, 200, 100])
+                t.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                    ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#F4F6F7")),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#BDC3C7")),
+                    ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                ]))
+                elements.append(t)
+                
+                doc.build(elements)
+                st.success(f"PDF generato con successo: {filename}")
+                
+                # Offriamo il download
+                with open(filename, "rb") as f:
+                    st.download_button(
+                        label="⬇️ Scarica il PDF",
+                        data=f,
+                        file_name=filename,
+                        mime="application/pdf"
+                    )
+                # Rimuoviamo il file temporaneo dal server dopo il download (opzionale, Streamlit lo gestisce)
+                # os.remove(filename)
+            except Exception as e:
+                st.error(f"Errore durante la generazione del PDF: {e}")
+
 def page_incassi():
     st.title("💰 Gestione Incassi")
     cantieri = get_cantieri()
