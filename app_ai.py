@@ -292,83 +292,123 @@ def page_costi():
     
     with tab1:
         st.subheader("Registra Ore Lavorate")
+        
+        # --- COMPONENTE VOCALE PER LA MANODOPERA ---
+        st.markdown("---")
+        st.caption("🎤 Dettatura Vocale (Sperimentale): Dì ad esempio 'Cantiere Via Roma, Operaio Mario Rossi, otto ore'")
+        
+        # Componente HTML/JS che invia il testo a Streamlit tramite query params
+        voice_html_man = """
+        <div id="voice-container-man">
+            <button id="start-record-man" style="background-color: #27AE60; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; width: 100%;">
+                🎤 Ascolta e Compila
+            </button>
+            <p id="status-man" style="margin-top: 10px; font-style: italic; color: #7F8C8D;">Premi il pulsante e parla...</p>
+        </div>
+        <script>
+            const startBtnMan = document.getElementById('start-record-man');
+            const statusMan = document.getElementById('status-man');
+            
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            
+            if (!SpeechRecognition) {
+                statusMan.innerText = "Il tuo browser non supporta il riconoscimento vocale. Usa Chrome o Edge.";
+            } else {
+                const recognition = new SpeechRecognition();
+                recognition.lang = 'it-IT';
+                recognition.interimResults = false;
+                recognition.maxAlternatives = 1;
+                
+                startBtnMan.addEventListener('click', () => {
+                    recognition.start();
+                    statusMan.innerText = "In ascolto...";
+                    startBtnMan.disabled = true;
+                });
+                
+                recognition.addEventListener('result', (event) => {
+                    const transcript = event.results[0][0].transcript;
+                    statusMan.innerText = "Riconosciuto: " + transcript;
+                    // Invia il testo a Streamlit tramite l'URL (trucco per comunicare col backend)
+                    window.location.href = window.location.pathname + "?voce=" + encodeURIComponent(transcript);
+                });
+                
+                recognition.addEventListener('error', (event) => {
+                    statusMan.innerText = "Errore: " + event.error + ". Controlla i permessi del microfono.";
+                    startBtnMan.disabled = false;
+                });
+                
+                recognition.addEventListener('end', () => {
+                    if (statusMan.innerText === "In ascolto...") {
+                        statusMan.innerText = "Nessun parlato rilevato. Riprova.";
+                        startBtnMan.disabled = false;
+                    }
+                });
+            }
+        </script>
+        """
+        st.components.v1.html(voice_html_man, height=150)
+        
+        # Leggiamo il parametro dall'URL (se presente)
+        query_params = st.query_params
+        if "voce" in query_params:
+            testo_vocale = query_params["voce"]
+            st.session_state["voce_manodopera"] = testo_vocale
+            # Puliamo l'URL per evitare che il testo rimanga lì
+            st.query_params.clear()
+            st.rerun()
+            
+        # Mostriamo il testo riconosciuto (se presente) e permettiamo di correggerlo
+        testo_riconosciuto = st.session_state.get("voce_manodopera", "")
+        if testo_riconosciuto:
+            testo_riconosciuto = st.text_input("Testo riconosciuto (puoi correggerlo):", value=testo_riconosciuto, key="input_voce_man")
+        # -------------------------------------------
+        
         col1, col2 = st.columns(2)
         data_m = col1.date_input("Data", datetime.date.today(), key="data_manodopera")
-        cantiere_m = col2.selectbox("Cantiere", cantieri['id'].tolist(), format_func=lambda x: cantieri[cantieri['id']==x]['indirizzo'].values[0], key="cant_manodopera")
+        
+        # Logica di auto-selezione del cantiere
+        cantiere_index = 0
+        if testo_riconosciuto:
+            for i, c in enumerate(cantieri['indirizzo'].tolist()):
+                if c.lower() in testo_riconosciuto.lower():
+                    cantiere_index = i
+                    break
+        cantiere_m = col2.selectbox("Cantiere", cantieri['id'].tolist(), format_func=lambda x: cantieri[cantieri['id']==x]['indirizzo'].values[0], key="cant_manodopera", index=cantiere_index)
         
         if not operai.empty:
             col3, col4 = st.columns(2)
-            operaio_sel = col3.selectbox("Operaio", operai['nome'].tolist(), key="op_manodopera")
+            
+            # Logica di auto-selezione dell'operaio
+            operaio_index = 0
+            if testo_riconosciuto:
+                for i, o in enumerate(operai['nome'].tolist()):
+                    if o.lower() in testo_riconosciuto.lower():
+                        operaio_index = i
+                        break
+            operaio_sel = col3.selectbox("Operaio", operai['nome'].tolist(), key="op_manodopera", index=operaio_index)
+            
             costo_standard = operai[operai['nome'] == operaio_sel]['costo_orario'].values[0]
-            
             costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=float(costo_standard), key="costo_orario")
-            ore = st.number_input("Ore Lavorate", min_value=0.0, step=0.5, key="ore_lavorate")
             
-            # --- INIZIO ESPERIMENTO VOCALE SEMPLIFICATO ---
-            st.markdown("---")
-            st.caption("🎤 Prova il riconoscimento vocale (sperimentale)")
-            
-            # Componente HTML/JS personalizzato per il microfono
-            voice_html = """
-            <div id="voice-container">
-                <button id="start-record" style="background-color: #27AE60; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px;">
-                    🎤 Inizia a Parlare
-                </button>
-                <p id="status" style="margin-top: 10px; font-style: italic; color: #7F8C8D;">Premi il pulsante e parla...</p>
-                <textarea id="result" rows="3" style="width: 100%; margin-top: 10px; padding: 10px; border-radius: 5px; border: 1px solid #BDC3C7;" placeholder="Il testo riconosciuto apparirà qui..."></textarea>
-            </div>
-            <script>
-                const startBtn = document.getElementById('start-record');
-                const status = document.getElementById('status');
-                const resultArea = document.getElementById('result');
-                
-                // Verifica se il browser supporta l'API
-                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-                
-                if (!SpeechRecognition) {
-                    status.innerText = "Il tuo browser non supporta il riconoscimento vocale. Usa Chrome o Edge.";
-                } else {
-                    const recognition = new SpeechRecognition();
-                    recognition.lang = 'it-IT';
-                    recognition.interimResults = false;
-                    recognition.maxAlternatives = 1;
+            # Logica di auto-compilazione delle ore
+            ore_default = 0.0
+            if testo_riconosciuto:
+                import re
+                # Cerchiamo un numero nel testo (es. "8", "otto" non è supportato nativamente, ma "8" sì)
+                numeri_trovati = re.findall(r'\d+', testo_riconosciuto)
+                if numeri_trovati:
+                    ore_default = float(numeri_trovati[0])
                     
-                    startBtn.addEventListener('click', () => {
-                        recognition.start();
-                        status.innerText = "In ascolto...";
-                        startBtn.disabled = true;
-                    });
-                    
-                    recognition.addEventListener('result', (event) => {
-                        const transcript = event.results[0][0].transcript;
-                        resultArea.value = transcript;
-                        status.innerText = "Riconoscimento completato!";
-                        startBtn.disabled = false;
-                    });
-                    
-                    recognition.addEventListener('error', (event) => {
-                        status.innerText = "Errore: " + event.error + ". Controlla i permessi del microfono.";
-                        startBtn.disabled = false;
-                    });
-                    
-                    recognition.addEventListener('end', () => {
-                        if (status.innerText === "In ascolto...") {
-                            status.innerText = "Nessun parlato rilevato. Riprova.";
-                            startBtn.disabled = false;
-                        }
-                    });
-                }
-            </script>
-            """
-            st.components.v1.html(voice_html, height=250)
-            # --- FINE ESPERIMENTO VOCALE ---
+            ore = st.number_input("Ore Lavorate", min_value=0.0, step=0.5, value=ore_default, key="ore_lavorate")
             
             if st.button("Salva Costo Manodopera", type="primary", key="btn_salva_manodopera"):
                 totale = ore * costo_orario
                 conn = get_connection(); c = conn.cursor()
                 c.execute("INSERT INTO costo_manodopera (data, cantiere_id, operaio, ore, costo_orario, totale) VALUES (?,?,?,?,?,?)", 
                           (str(data_m), cantiere_m, operaio_sel, ore, costo_orario, totale))
-                conn.commit(); conn.close(); st.success("Costo manodopera registrato!"); st.rerun()
+                conn.commit(); conn.close(); 
+                st.session_state["voce_manodopera"] = "" # Pulisce la memoria
+                st.success("Costo manodopera registrato!"); st.rerun()
         else:
             st.info("Nessun operaio in anagrafica.")
 
@@ -404,91 +444,6 @@ def page_costi():
                 else:
                     st.error("Devi prima selezionare un fornitore.")
 
-    st.divider()
-    st.subheader("🛠️ Gestisci Costo Selezionato")
-    
-    conn = get_connection()
-    query = """
-        SELECT 'M-' || id as ID_Unico, 'Manodopera' as Tipo, data, (SELECT indirizzo FROM preventivi WHERE id = cantiere_id) as Cantiere, operaio as Descrizione, totale as Totale
-        FROM costo_manodopera
-        UNION ALL
-        SELECT 'Mat-' || id as ID_Unico, 'Materiale' as Tipo, data, (SELECT indirizzo FROM preventivi WHERE id = cantiere_id) as Cantiere, fornitore as Descrizione, totale as Totale
-        FROM costo_materiali
-        ORDER BY data DESC
-    """
-    df_costi = pd.read_sql_query(query, conn)
-    conn.close()
-    
-    df_costi.columns = [c.capitalize() for c in df_costi.columns]
-    
-    if not df_costi.empty:
-        costi_list = [f"{row['Id_unico']} - {row['Data']} - {row['Descrizione']} - €{row['Totale']}" for _, row in df_costi.iterrows()]
-        costo_sel_str = st.selectbox("Seleziona un costo da gestire:", costi_list, key="sel_costo_da_gestire")
-        
-        id_unico = costo_sel_str.split(" - ")[0]
-        
-        if id_unico.startswith("M-"):
-            real_id = id_unico.replace("M-", "")
-            conn = get_connection()
-            df_specifico = pd.read_sql_query(f"SELECT * FROM costo_manodopera WHERE id={real_id}", conn)
-            conn.close()
-            row = df_specifico.iloc[0]
-            
-            with st.form("modifica_manodopera"):
-                st.write("Dettagli Manodopera")
-                col1, col2 = st.columns(2)
-                m_data = col1.date_input("Data", pd.to_datetime(row['data']).date(), key="mod_data_man")
-                m_ore = col2.number_input("Ore Lavorate", value=float(row['ore']), step=0.5, key="mod_ore_man")
-                m_costo = st.number_input("Costo Orario (€)", value=float(row['costo_orario']), step=1.0, key="mod_costo_man")
-                
-                col_btn1, col_btn2 = st.columns(2)
-                if col_btn1.form_submit_button("Salva Modifiche"):
-                    tot = m_ore * m_costo
-                    conn = get_connection(); c = conn.cursor()
-                    c.execute("UPDATE costo_manodopera SET data=?, ore=?, costo_orario=?, totale=? WHERE id=?", 
-                              (str(m_data), m_ore, m_costo, tot, real_id))
-                    conn.commit(); conn.close(); st.success("Costo aggiornato!"); st.rerun()
-                
-                if col_btn2.form_submit_button("Elimina Costo", type="primary"):
-                    conn = get_connection(); c = conn.cursor()
-                    c.execute("DELETE FROM costo_manodopera WHERE id=?", (real_id,))
-                    conn.commit(); conn.close(); st.success("Costo eliminato!"); st.rerun()
-
-        else:
-            real_id = id_unico.replace("Mat-", "")
-            conn = get_connection()
-            df_specifico = pd.read_sql_query(f"SELECT * FROM costo_materiali WHERE id={real_id}", conn)
-            conn.close()
-            row = df_specifico.iloc[0]
-            
-            with st.form("modifica_materiali"):
-                st.write("Dettagli Materiale")
-                col1, col2 = st.columns(2)
-                m_data = col1.date_input("Data", pd.to_datetime(row['data']).date(), key="mod_data_mat")
-                m_doc = col2.text_input("N. Documento", value=row['documento'], key="mod_doc_mat")
-                
-                col3, col4 = st.columns(2)
-                m_imp = col3.number_input("Imponibile (€)", value=float(row['imponibile']), step=10.0, key="mod_imp_mat")
-                m_iva = col4.number_input("Aliquota IVA (%)", value=float(row['iva']), step=1.0, key="mod_iva_mat")
-                
-                col_btn1, col_btn2 = st.columns(2)
-                if col_btn1.form_submit_button("Salva Modifiche"):
-                    tot = m_imp + (m_imp * m_iva / 100)
-                    conn = get_connection(); c = conn.cursor()
-                    c.execute("UPDATE costo_materiali SET data=?, documento=?, imponibile=?, iva=?, totale=? WHERE id=?", 
-                              (str(m_data), m_doc, m_imp, m_iva, tot, real_id))
-                    conn.commit(); conn.close(); st.success("Costo aggiornato!"); st.rerun()
-                
-                if col_btn2.form_submit_button("Elimina Costo", type="primary"):
-                    conn = get_connection(); c = conn.cursor()
-                    c.execute("DELETE FROM costo_materiali WHERE id=?", (real_id,))
-                    conn.commit(); conn.close(); st.success("Costo eliminato!"); st.rerun()
-    else:
-        st.info("Nessun costo registrato finora.")
-
-    st.divider()
-    st.subheader("📋 Elenco Costi Registrati")
-    st.dataframe(df_costi, use_container_width=True)
 
 def page_incassi():
     st.title("💰 Gestione Incassi")
