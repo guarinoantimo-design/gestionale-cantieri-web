@@ -399,17 +399,15 @@ def page_costi():
                     
             ore = st.number_input("Ore Lavorate", min_value=0.0, step=0.5, value=ore_default, key="ore_lavorate")
             
-                    if st.button("Salva Costo Manodopera", type="primary", key="btn_salva_manodopera"):
+            if st.button("Salva Costo Manodopera", type="primary", key="btn_salva_manodopera"):
                 totale = ore * costo_orario
                 conn = get_connection(); c = conn.cursor()
                 c.execute("INSERT INTO costo_manodopera (data, cantiere_id, operaio, ore, costo_orario, totale) VALUES (?,?,?,?,?,?)", 
                           (str(data_m), cantiere_m, operaio_sel, ore, costo_orario, totale))
                 conn.commit(); conn.close(); 
-                
-                # Pulizia sicura: non tocchiamo direttamente il widget text_area
                 st.session_state["testo_da_analizzare_man"] = ""
                 st.success("Costo manodopera registrato!")
-                st.rerun()    
+                st.rerun()
         else:
             st.info("Nessun operaio in anagrafica.")
 
