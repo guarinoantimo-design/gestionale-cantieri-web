@@ -6,7 +6,6 @@ import hashlib
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import re
 
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Gestionale Cantieri", page_icon="🏗️", layout="wide")
@@ -104,6 +103,7 @@ def page_home():
     
     col1, col2 = st.columns(2)
     with col1:
+        # Aggiunto 'key' univoco per evitare conflitti
         if st.button("📋 Gestione Cantieri", use_container_width=True, key="home_btn_cantieri"):
             st.session_state.current_page = "Cantieri"; st.rerun()
         if st.button("📉 Inserimento Costi", use_container_width=True, key="home_btn_costi"):
@@ -291,123 +291,24 @@ def page_costi():
     
     with tab1:
         st.subheader("Registra Ore Lavorate")
-        
-        st.markdown("---")
-        st.caption("🎤 Dettatura Vocale: Dì ad esempio 'Cantiere Via Roma, Operaio Mario Rossi, 8 ore'")
-        
-        voice_html_man = """
-        <div id="voice-container-man">
-            <button id="start-record-man" style="background-color: #27AE60; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; width: 100%;">
-                🎤 Inizia a Parlare
-            </button>
-            <p id="status-man" style="margin-top: 10px; font-style: italic; color: #7F8C8D;">Premi il pulsante e parla...</p>
-            <textarea id="result-man" rows="3" style="width: 100%; margin-top: 10px; padding: 10px; border-radius: 5px; border: 1px solid #BDC3C7;" placeholder="Il testo riconosciuto apparirà qui..."></textarea>
-            <button id="copy-btn-man" style="background-color: #3498DB; color: white; padding: 5px 10px; border: none; border-radius: 5px; cursor: pointer; margin-top: 5px;">
-                📋 Copia il testo
-            </button>
-        </div>
-        <script>
-            const startBtnMan = document.getElementById('start-record-man');
-            const statusMan = document.getElementById('status-man');
-            const resultMan = document.getElementById('result-man');
-            const copyBtnMan = document.getElementById('copy-btn-man');
-            
-            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-            
-            if (!SpeechRecognition) {
-                statusMan.innerText = "Il tuo browser non supporta il riconoscimento vocale. Usa Chrome o Edge.";
-            } else {
-                const recognition = new SpeechRecognition();
-                recognition.lang = 'it-IT';
-                recognition.interimResults = false;
-                recognition.maxAlternatives = 1;
-                
-                startBtnMan.addEventListener('click', () => {
-                    recognition.start();
-                    statusMan.innerText = "In ascolto...";
-                    startBtnMan.disabled = true;
-                });
-                
-                recognition.addEventListener('result', (event) => {
-                    const transcript = event.results[0][0].transcript;
-                    statusMan.innerText = "Riconosciuto!";
-                    resultMan.value = transcript;
-                    startBtnMan.disabled = false;
-                });
-                
-                recognition.addEventListener('error', (event) => {
-                    statusMan.innerText = "Errore: " + event.error + ". Controlla i permessi del microfono.";
-                    startBtnMan.disabled = false;
-                });
-                
-                recognition.addEventListener('end', () => {
-                    if (statusMan.innerText === "In ascolto...") {
-                        statusMan.innerText = "Nessun parlato rilevato. Riprova.";
-                        startBtnMan.disabled = false;
-                    }
-                });
-                
-                copyBtnMan.addEventListener('click', () => {
-                    resultMan.select();
-                    document.execCommand('copy');
-                    statusMan.innerText = "Testo copiato negli appunti!";
-                });
-            }
-        </script>
-        """
-        st.components.v1.html(voice_html_man, height=250)
-        
-        st.markdown("**Incolla qui il testo copiato (Ctrl+V) e premi 'Elabora':**")
-        testo_incollato = st.text_area("Testo dettato:", height=100, key="testo_incollato_man")
-        
-        if st.button("🧠 Elabora Dettatura", type="secondary", key="btn_elabora_man"):
-            st.session_state["testo_da_analizzare_man"] = testo_incollato
-            st.rerun()
-        
-        testo_da_analizzare = st.session_state.get("testo_da_analizzare_man", "")
-        
         col1, col2 = st.columns(2)
         data_m = col1.date_input("Data", datetime.date.today(), key="data_manodopera")
-        
-        cantiere_index = 0
-        if testo_da_analizzare:
-            for i, c in enumerate(cantieri['indirizzo'].tolist()):
-                if c.lower() in testo_da_analizzare.lower():
-                    cantiere_index = i
-                    break
-        cantiere_m = col2.selectbox("Cantiere", cantieri['id'].tolist(), format_func=lambda x: cantieri[cantieri['id']==x]['indirizzo'].values[0], key="cant_manodopera", index=cantiere_index)
+        cantiere_m = col2.selectbox("Cantiere", cantieri['id'].tolist(), format_func=lambda x: cantieri[cantieri['id']==x]['indirizzo'].values[0], key="cant_manodopera")
         
         if not operai.empty:
             col3, col4 = st.columns(2)
-            
-            operaio_index = 0
-            if testo_da_analizzare:
-                for i, o in enumerate(operai['nome'].tolist()):
-                    if o.lower() in testo_da_analizzare.lower():
-                        operaio_index = i
-                        break
-            operaio_sel = col3.selectbox("Operaio", operai['nome'].tolist(), key="op_manodopera", index=operaio_index)
-            
+            operaio_sel = col3.selectbox("Operaio", operai['nome'].tolist(), key="op_manodopera")
             costo_standard = operai[operai['nome'] == operaio_sel]['costo_orario'].values[0]
-            costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=float(costo_standard), key="costo_orario")
             
-            ore_default = 0.0
-            if testo_da_analizzare:
-                numeri_trovati = re.findall(r'\d+', testo_da_analizzare)
-                if numeri_trovati:
-                    ore_default = float(numeri_trovati[0])
-                    
-            ore = st.number_input("Ore Lavorate", min_value=0.0, step=0.5, value=ore_default, key="ore_lavorate")
+            costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=float(costo_standard), key="costo_orario")
+            ore = st.number_input("Ore Lavorate", min_value=0.0, step=0.5, key="ore_lavorate")
             
             if st.button("Salva Costo Manodopera", type="primary", key="btn_salva_manodopera"):
                 totale = ore * costo_orario
                 conn = get_connection(); c = conn.cursor()
                 c.execute("INSERT INTO costo_manodopera (data, cantiere_id, operaio, ore, costo_orario, totale) VALUES (?,?,?,?,?,?)", 
                           (str(data_m), cantiere_m, operaio_sel, ore, costo_orario, totale))
-                conn.commit(); conn.close(); 
-                st.session_state["testo_da_analizzare_man"] = ""
-                st.success("Costo manodopera registrato!")
-                st.rerun()
+                conn.commit(); conn.close(); st.success("Costo manodopera registrato!"); st.rerun()
         else:
             st.info("Nessun operaio in anagrafica.")
 
@@ -426,22 +327,15 @@ def page_costi():
                 col5, col6 = st.columns(2)
                 imponibile = col5.number_input("Imponibile (€)", min_value=0.0, step=10.0, key="imponibile")
                 iva = col6.number_input("Aliquota IVA (%)", min_value=0.0, value=22.0, step=1.0, key="iva_materiale")
-            else:
-                st.info("Nessun fornitore in anagrafica. Aggiungine uno per poter registrare i materiali.")
-                fornitore_sel = None
-                documento = ""
-                imponibile = 0.0
-                iva = 0.0
-
-            if st.form_submit_button("Salva Costo Materiale"):
-                if fornitore_sel:
+                
+                if st.form_submit_button("Salva Costo Materiale"):
                     totale = imponibile + (imponibile * iva / 100)
                     conn = get_connection(); c = conn.cursor()
                     c.execute("INSERT INTO costo_materiali (data, cantiere_id, fornitore, documento, imponibile, iva, totale) VALUES (?,?,?,?,?,?,?)", 
                               (str(data_mat), cantiere_mat, fornitore_sel, documento, imponibile, iva, totale))
                     conn.commit(); conn.close(); st.success("Costo materiale registrato!"); st.rerun()
-                else:
-                    st.error("Devi prima selezionare un fornitore.")
+            else:
+                st.info("Nessun fornitore in anagrafica.")
 
     st.divider()
     st.subheader("🛠️ Gestisci Costo Selezionato")
@@ -754,4 +648,3 @@ else:
     elif st.session_state.current_page == "Incassi": page_incassi()
     elif st.session_state.current_page == "Avanzamento": page_avanzamento()
     elif st.session_state.current_page == "Riepilogo": page_riepilogo()
-
