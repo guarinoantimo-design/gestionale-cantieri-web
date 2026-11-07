@@ -6,6 +6,8 @@ import hashlib
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import re
+import os
 
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Gestionale Cantieri", page_icon="🏗️", layout="wide")
@@ -33,6 +35,8 @@ def init_db():
     c.execute("CREATE TABLE IF NOT EXISTS fornitori (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, piva TEXT, contatto TEXT)")
     c.execute("CREATE TABLE IF NOT EXISTS costo_manodopera (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, operaio TEXT, ore REAL, costo_orario REAL, totale REAL)")
     c.execute("CREATE TABLE IF NOT EXISTS costo_materiali (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, fornitore TEXT, documento TEXT, imponibile REAL, iva REAL, totale REAL)")
+    # NUOVA TABELLA: COSTI AMMINISTRATIVI
+    c.execute("CREATE TABLE IF NOT EXISTS costo_amministrativo (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, descrizione TEXT, importo REAL)")
     c.execute("CREATE TABLE IF NOT EXISTS incassi (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, fattura TEXT, imponibile REAL, iva REAL, totale REAL)")
     c.execute("CREATE TABLE IF NOT EXISTS avanzamento (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, descrizione TEXT, importo REAL)")
     
@@ -101,28 +105,24 @@ def page_home():
     st.title("🏠 Home")
     st.write("GESTIONE CANTIERE. Situazione attualizzata.")
     
-    # --- CALCOLO DEI TOTALI (Solo Cantieri Attivi) ---
     conn = get_connection()
-    
-    # Query per i numeri
     query_totali = """
         SELECT 
             (SELECT COUNT(*) FROM preventivi WHERE stato = 'Attivo') as num_cantieri,
             (SELECT SUM(totale) FROM incassi i JOIN preventivi p ON i.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_incassi,
-            (SELECT SUM(totale) FROM costo_manodopera c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_costi_man,
-            (SELECT SUM(totale) FROM costo_materiali c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_costi_mat
+            (SELECT SUM(totale) FROM costo_manodopera c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_costi_pers,
+            (SELECT SUM(totale) FROM costo_materiali c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_costi_mat,
+            (SELECT SUM(importo) FROM costo_amministrativo) as tot_costi_amm
     """
     res = pd.read_sql_query(query_totali, conn).iloc[0]
     conn.close()
     
     num_cantieri = res['num_cantieri'] or 0
     tot_incassi = res['tot_incassi'] or 0
-    tot_costi = (res['tot_costi_man'] or 0) + (res['tot_costi_mat'] or 0)
+    tot_costi = (res['tot_costi_pers'] or 0) + (res['tot_costi_mat'] or 0) + (res['tot_costi_amm'] or 0)
     saldo = tot_incassi - tot_costi
     
-    # --- RIQUADRI METRICHE ---
     col1, col2, col3, col4 = st.columns(4)
-    
     with col1:
         st.metric(label="🏗️ Cantieri Attivi", value=num_cantieri)
     with col2:
@@ -130,12 +130,10 @@ def page_home():
     with col3:
         st.metric(label="📉 Costi Totali", value=f"€ {tot_costi:,.2f}", delta_color="inverse")
     with col4:
-        # Il saldo può essere positivo (verde) o negativo (rosso)
         st.metric(label="⚖️ Saldo", value=f"€ {saldo:,.2f}", delta_color="normal" if saldo >= 0 else "inverse")
     
     st.divider()
     
-    # --- ACCESSI RAPIDI ---
     st.subheader("🚀 Accessi Rapidi")
     st.write("Seleziona una sezione per iniziare a lavorare.")
     
@@ -184,7 +182,8 @@ def page_cantieri():
 
     st.divider()
     conn = get_connection()
-    df = pd.read_sql_query("SELECT id, data, cliente, indirizzo, importo_contratto, stato FROM preventivi", conn)
+    # Mostriamo tutti i campi richiesti
+    df = pd.read_sql_query("SELECT id, data, n_prev, cliente, indirizzo, descrizione, importo_prev, importo_contratto, stato FROM preventivi", conn)
     conn.close()
     
     if not df.empty:
@@ -225,12 +224,14 @@ def page_cantieri():
             with st.form("modifica_cantiere_form"):
                 m_cliente = st.text_input("Cliente", value=cantiere_data['cliente'])
                 m_indirizzo = st.text_input("Indirizzo", value=cantiere_data['indirizzo'])
+                m_descrizione = st.text_input("Descrizione", value=cantiere_data['descrizione'])
+                m_importo_prev = st.number_input("Importo Preventivo (€)", value=float(cantiere_data['importo_prev']))
                 m_importo = st.number_input("Importo Contratto (€)", value=float(cantiere_data['importo_contratto']))
                 
                 if st.form_submit_button("Salva Modifiche"):
                     conn = get_connection(); c = conn.cursor()
-                    c.execute("UPDATE preventivi SET cliente=?, indirizzo=?, importo_contratto=? WHERE id=?", 
-                              (m_cliente, m_indirizzo, m_importo, cantiere_sel))
+                    c.execute("UPDATE preventivi SET cliente=?, indirizzo=?, descrizione=?, importo_prev=?, importo_contratto=? WHERE id=?", 
+                              (m_cliente, m_indirizzo, m_descrizione, m_importo_prev, m_importo, cantiere_sel))
                     conn.commit(); conn.close(); st.success("Modifiche salvate!"); st.rerun()
     else:
         st.info("Nessun cantiere presente.")
@@ -331,7 +332,7 @@ def page_costi():
         st.session_state.costo_da_modificare = None
 
     # --- SEZIONE DI INSERIMENTO (TABS) ---
-    tab1, tab2 = st.tabs(["Costo Manodopera", "Costo Materiale"])
+    tab1, tab2, tab3 = st.tabs(["Costo Personale", "Costo Materiale", "Costo Amministrativo"])
     
     with tab1:
         st.subheader("Registra Ore Lavorate")
@@ -347,12 +348,12 @@ def page_costi():
             costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=float(costo_standard), key="costo_orario")
             ore = st.number_input("Ore Lavorate", min_value=0.0, step=0.5, key="ore_lavorate")
             
-            if st.button("Salva Costo Manodopera", type="primary", key="btn_salva_manodopera"):
+            if st.button("Salva Costo Personale", type="primary", key="btn_salva_manodopera"):
                 totale = ore * costo_orario
                 conn = get_connection(); c = conn.cursor()
                 c.execute("INSERT INTO costo_manodopera (data, cantiere_id, operaio, ore, costo_orario, totale) VALUES (?,?,?,?,?,?)", 
                           (str(data_m), cantiere_m, operaio_sel, ore, costo_orario, totale))
-                conn.commit(); conn.close(); st.success("Costo manodopera registrato!"); st.rerun()
+                conn.commit(); conn.close(); st.success("Costo personale registrato!"); st.rerun()
         else:
             st.info("Nessun operaio in anagrafica.")
 
@@ -387,6 +388,26 @@ def page_costi():
                     conn.commit(); conn.close(); st.success("Costo materiale registrato!"); st.rerun()
                 else:
                     st.error("Devi prima selezionare un fornitore.")
+
+    with tab3:
+        with st.form("form_amministrativo", clear_on_submit=True):
+            st.subheader("Registra Costo Amministrativo")
+            st.write("Spese generali non legate a un cantiere specifico (es. commercialista, software, cancelleria).")
+            
+            col1, col2 = st.columns(2)
+            data_amm = col1.date_input("Data", datetime.date.today(), key="data_amm")
+            desc_amm = col2.text_input("Descrizione Spesa", key="desc_amm")
+            
+            importo_amm = st.number_input("Importo (€)", min_value=0.0, step=10.0, key="importo_amm")
+            
+            if st.form_submit_button("Salva Costo Amministrativo"):
+                if desc_amm and importo_amm > 0:
+                    conn = get_connection(); c = conn.cursor()
+                    c.execute("INSERT INTO costo_amministrativo (data, descrizione, importo) VALUES (?,?,?)", 
+                              (str(data_amm), desc_amm, importo_amm))
+                    conn.commit(); conn.close(); st.success("Costo amministrativo registrato!"); st.rerun()
+                else:
+                    st.error("Descrizione e Importo sono obbligatori.")
 
     st.divider()
 
@@ -429,7 +450,7 @@ def page_costi():
                         st.session_state.costo_da_modificare = None
                         st.success("Costo eliminato!"); st.rerun()
             
-            else:
+            elif id_unico.startswith("Mat-"):
                 real_id = id_unico.replace("Mat-", "")
                 conn = get_connection()
                 df_specifico = pd.read_sql_query(f"SELECT * FROM costo_materiali WHERE id={real_id}", conn)
@@ -463,6 +484,37 @@ def page_costi():
                         st.session_state.modifica_costo_attiva = False
                         st.session_state.costo_da_modificare = None
                         st.success("Costo eliminato!"); st.rerun()
+
+            elif id_unico.startswith("Amm-"):
+                real_id = id_unico.replace("Amm-", "")
+                conn = get_connection()
+                df_specifico = pd.read_sql_query(f"SELECT * FROM costo_amministrativo WHERE id={real_id}", conn)
+                conn.close()
+                row = df_specifico.iloc[0]
+                
+                with st.form("modifica_amministrativo_form"):
+                    col1, col2 = st.columns(2)
+                    m_data = col1.date_input("Data", pd.to_datetime(row['data']).date())
+                    m_desc = col2.text_input("Descrizione", value=row['descrizione'])
+                    m_imp = st.number_input("Importo (€)", value=float(row['importo']), step=10.0)
+                    
+                    col_btn1, col_btn2 = st.columns(2)
+                    if col_btn1.form_submit_button("Salva Modifiche", type="primary"):
+                        conn = get_connection(); c = conn.cursor()
+                        c.execute("UPDATE costo_amministrativo SET data=?, descrizione=?, importo=? WHERE id=?", 
+                                  (str(m_data), m_desc, m_imp, real_id))
+                        conn.commit(); conn.close()
+                        st.session_state.modifica_costo_attiva = False
+                        st.session_state.costo_da_modificare = None
+                        st.success("Costo aggiornato!"); st.rerun()
+                        
+                    if col_btn2.form_submit_button("Elimina Costo", type="secondary"):
+                        conn = get_connection(); c = conn.cursor()
+                        c.execute("DELETE FROM costo_amministrativo WHERE id=?", (real_id,))
+                        conn.commit(); conn.close()
+                        st.session_state.modifica_costo_attiva = False
+                        st.session_state.costo_da_modificare = None
+                        st.success("Costo eliminato!"); st.rerun()
             
             if st.button("Annulla Modifica", key="btn_annulla_modifica"):
                 st.session_state.modifica_costo_attiva = False
@@ -477,13 +529,13 @@ def page_costi():
     with st.expander("🔍 Filtra i costi", expanded=True):
         col_f1, col_f2, col_f3, col_f4 = st.columns(4)
         filtro_testo = col_f1.text_input("Cerca (Operaio/Fornitore/Cantiere)", placeholder="Scrivi qui...")
-        filtro_tipo = col_f2.selectbox("Tipo di costo", ["Tutti", "Manodopera", "Materiale"])
+        filtro_tipo = col_f2.selectbox("Tipo di costo", ["Tutti", "Personale", "Materiale", "Amministrativo"])
         data_inizio = col_f3.date_input("Dal", value=datetime.date(2000, 1, 1))
         data_fine = col_f4.date_input("Al", value=datetime.date.today())
     
     conn = get_connection()
-    query_man = f"""
-        SELECT 'M-' || id as ID_Unico, 'Manodopera' as Tipo, data, 
+    query_pers = f"""
+        SELECT 'M-' || id as ID_Unico, 'Personale' as Tipo, data, 
                (SELECT indirizzo FROM preventivi WHERE id = cantiere_id) as Cantiere, 
                operaio as Descrizione, totale as Totale
         FROM costo_manodopera
@@ -496,13 +548,22 @@ def page_costi():
         FROM costo_materiali
         WHERE data >= '{data_inizio}' AND data <= '{data_fine}'
     """
+    query_amm = f"""
+        SELECT 'Amm-' || id as ID_Unico, 'Amministrativo' as Tipo, data, 
+               'Spese Generali' as Cantiere, 
+               descrizione as Descrizione, importo as Totale
+        FROM costo_amministrativo
+        WHERE data >= '{data_inizio}' AND data <= '{data_fine}'
+    """
     
-    if filtro_tipo == "Manodopera":
-        query = query_man
+    if filtro_tipo == "Personale":
+        query = query_pers
     elif filtro_tipo == "Materiale":
         query = query_mat
+    elif filtro_tipo == "Amministrativo":
+        query = query_amm
     else:
-        query = query_man + " UNION ALL " + query_mat
+        query = query_pers + " UNION ALL " + query_mat + " UNION ALL " + query_amm
     
     query += " ORDER BY data DESC"
     
@@ -521,7 +582,6 @@ def page_costi():
     else:
         df_costi.columns = [c.capitalize() for c in df_costi.columns]
         
-        # Mostriamo i risultati
         for index, row in df_costi.iterrows():
             col_dati, col_btn = st.columns([8, 2])
             with col_dati:
@@ -532,28 +592,23 @@ def page_costi():
                     st.session_state.costo_da_modificare = row['Id_unico']
                     st.rerun()
         
-        # --- TOTALE COMPLESSIVO DEI FILTRATI ---
         st.divider()
         totale_filtrato = df_costi['Totale'].sum()
         st.markdown(f"### Totale dei costi filtrati: **€ {totale_filtrato:,.2f}**")
         
-        # --- PULSANTE DI ESPORTAZIONE PDF ---
         if st.button("📄 Esporta Risultati in PDF", type="primary", key="btn_export_pdf_costi"):
-            # Creazione del PDF
             try:
                 from reportlab.lib.pagesizes import A4, landscape
                 from reportlab.pdfgen import canvas
                 from reportlab.lib import colors
                 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
                 from reportlab.lib.styles import getSampleStyleSheet
-                import os
                 
                 filename = f"Riepilogo_Costi_{datetime.date.today()}.pdf"
                 doc = SimpleDocTemplate(filename, pagesize=landscape(A4))
                 elements = []
                 styles = getSampleStyleSheet()
                 
-                # Titolo
                 elements.append(Paragraph(f"Riepilogo Costi dal {data_inizio} al {data_fine}", styles['Title']))
                 if filtro_testo:
                     elements.append(Paragraph(f"Filtro di ricerca: '{filtro_testo}'", styles['Normal']))
@@ -561,7 +616,6 @@ def page_costi():
                     elements.append(Paragraph(f"Tipo: {filtro_tipo}", styles['Normal']))
                 elements.append(Spacer(1, 12))
                 
-                # Dati Tabella
                 data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Totale (€)"]]
                 for _, row in df_costi.iterrows():
                     data_rows.append([
@@ -569,7 +623,6 @@ def page_costi():
                     ])
                 data_rows.append(["", "", "", "TOTALE GENERALE", f"€ {totale_filtrato:,.2f}"])
                 
-                # Stile Tabella
                 t = Table(data_rows, colWidths=[80, 70, 200, 200, 100])
                 t.setStyle(TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
@@ -586,7 +639,6 @@ def page_costi():
                 doc.build(elements)
                 st.success(f"PDF generato con successo: {filename}")
                 
-                # Offriamo il download
                 with open(filename, "rb") as f:
                     st.download_button(
                         label="⬇️ Scarica il PDF",
@@ -594,8 +646,6 @@ def page_costi():
                         file_name=filename,
                         mime="application/pdf"
                     )
-                # Rimuoviamo il file temporaneo dal server dopo il download (opzionale, Streamlit lo gestisce)
-                # os.remove(filename)
             except Exception as e:
                 st.error(f"Errore durante la generazione del PDF: {e}")
 
@@ -682,13 +732,14 @@ def page_riepilogo():
             (SELECT SUM(importo_contratto) FROM preventivi WHERE stato = 'Attivo') as tot_contratti,
             (SELECT SUM(totale) FROM incassi i JOIN preventivi p ON i.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_incassi,
             (SELECT SUM(totale) FROM costo_manodopera c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_costi_man,
-            (SELECT SUM(totale) FROM costo_materiali c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_costi_mat
+            (SELECT SUM(totale) FROM costo_materiali c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_costi_mat,
+            (SELECT SUM(importo) FROM costo_amministrativo) as tot_costi_amm
     """
     res = pd.read_sql_query(query_totali, conn).iloc[0]
     
     tot_contratti = res['tot_contratti'] or 0
     tot_incassi = res['tot_incassi'] or 0
-    tot_costi = (res['tot_costi_man'] or 0) + (res['tot_costi_mat'] or 0)
+    tot_costi = (res['tot_costi_man'] or 0) + (res['tot_costi_mat'] or 0) + (res['tot_costi_amm'] or 0)
     saldo = tot_incassi - tot_costi
 
     st.markdown("### 🏢 Totali Aziendali (Solo Cantieri Attivi)")
@@ -723,7 +774,7 @@ def page_riepilogo():
         if df_inc.empty and df_man.empty and df_mat.empty:
             st.info("Nessun dato economico disponibile per i cantieri attivi.")
         else:
-            df_inc['Tipo'] = 'Incasso'; df_man['Tipo'] = 'Costo Man'; df_mat['Tipo'] = 'Costo Mat'
+            df_inc['Tipo'] = 'Incasso'; df_man['Tipo'] = 'Costo Pers'; df_mat['Tipo'] = 'Costo Mat'
             all_movs = pd.concat([df_inc, df_man, df_mat]).sort_values('data')
             
             if not all_movs.empty:
@@ -769,7 +820,7 @@ def page_riepilogo():
         st.progress(min(perc_avanz / 100, 1.0))
         
         query_incassi = f"SELECT data, totale, 'Incasso' as Tipo FROM incassi WHERE cantiere_id = {cid}"
-        query_costi_m = f"SELECT data, totale, 'Costo Man' as Tipo FROM costo_manodopera WHERE cantiere_id = {cid}"
+        query_costi_m = f"SELECT data, totale, 'Costo Pers' as Tipo FROM costo_manodopera WHERE cantiere_id = {cid}"
         query_costi_mat = f"SELECT data, totale, 'Costo Mat' as Tipo FROM costo_materiali WHERE cantiere_id = {cid}"
         
         all_movs = pd.read_sql_query(f"{query_incassi} UNION ALL {query_costi_m} UNION ALL {query_costi_mat} ORDER BY data", conn)
