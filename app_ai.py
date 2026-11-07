@@ -813,7 +813,7 @@ else:
         if st.button("📊 Riepilogo", use_container_width=True, key="sidebar_riepilogo"):
             st.session_state.current_page = "Riepilogo"; st.rerun()
         
-             st.divider()
+        st.divider()
         
         # --- BACKUP DATABASE ---
         st.markdown("##### 💾 Sicurezza Dati")
@@ -833,7 +833,7 @@ else:
         st.divider()
         
         if st.button("🚪 Logout", type="primary", use_container_width=True, key="sidebar_logout"):
-            st.session_state.logged_in = False; st.rerun()   
+            st.session_state.logged_in = False; st.rerun()
 
     if st.session_state.current_page == "Home": page_home()
     elif st.session_state.current_page == "Cantieri": page_cantieri()
