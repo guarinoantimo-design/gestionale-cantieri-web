@@ -348,15 +348,24 @@ def page_costi():
                 col5, col6 = st.columns(2)
                 imponibile = col5.number_input("Imponibile (€)", min_value=0.0, step=10.0, key="imponibile")
                 iva = col6.number_input("Aliquota IVA (%)", min_value=0.0, value=22.0, step=1.0, key="iva_materiale")
-                
-                if st.form_submit_button("Salva Costo Materiale"):
+            else:
+                st.info("Nessun fornitore in anagrafica. Aggiungine uno per poter registrare i materiali.")
+                # Variabili fittizie per evitare errori nel salvataggio
+                fornitore_sel = None
+                documento = ""
+                imponibile = 0.0
+                iva = 0.0
+
+            # Il pulsante è FUORI dall'if, così è sempre visibile
+            if st.form_submit_button("Salva Costo Materiale"):
+                if fornitore_sel:
                     totale = imponibile + (imponibile * iva / 100)
                     conn = get_connection(); c = conn.cursor()
                     c.execute("INSERT INTO costo_materiali (data, cantiere_id, fornitore, documento, imponibile, iva, totale) VALUES (?,?,?,?,?,?,?)", 
                               (str(data_mat), cantiere_mat, fornitore_sel, documento, imponibile, iva, totale))
                     conn.commit(); conn.close(); st.success("Costo materiale registrato!"); st.rerun()
-            else:
-                st.info("Nessun fornitore in anagrafica.")
+                else:
+                    st.error("Devi prima selezionare un fornitore.")
 
     st.divider()
     st.subheader("🛠️ Gestisci Costo Selezionato")
