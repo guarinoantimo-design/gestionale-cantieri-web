@@ -813,9 +813,27 @@ else:
         if st.button("📊 Riepilogo", use_container_width=True, key="sidebar_riepilogo"):
             st.session_state.current_page = "Riepilogo"; st.rerun()
         
+             st.divider()
+        
+        # --- BACKUP DATABASE ---
+        st.markdown("##### 💾 Sicurezza Dati")
+        try:
+            with open(DB_NAME, "rb") as f:
+                st.download_button(
+                    label="Scarica Backup Database",
+                    data=f,
+                    file_name=f"backup_gestionale_{datetime.date.today()}.db",
+                    mime="application/octet-stream",
+                    key="sidebar_backup_db",
+                    use_container_width=True
+                )
+        except FileNotFoundError:
+            st.caption("Nessun database da salvare.")
+        
         st.divider()
+        
         if st.button("🚪 Logout", type="primary", use_container_width=True, key="sidebar_logout"):
-            st.session_state.logged_in = False; st.rerun()
+            st.session_state.logged_in = False; st.rerun()   
 
     if st.session_state.current_page == "Home": page_home()
     elif st.session_state.current_page == "Cantieri": page_cantieri()
