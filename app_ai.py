@@ -99,7 +99,7 @@ def get_fornitori():
 # --- PAGINE ---
 def page_home():
     st.title("🏠 Home")
-    st.write("Benvenuto nel Gestionale. Ecco la situazione attuale della tua azienda.")
+    st.write("GESTIONE CANTIERE. Situazione attualizzata.")
     
     # --- CALCOLO DEI TOTALI (Solo Cantieri Attivi) ---
     conn = get_connection()
