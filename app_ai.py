@@ -752,16 +752,21 @@ def page_riepilogo():
     
     st.divider()
 
-    # --- REPORT COSTI PER CANTIERE ---
+       # --- REPORT COSTI PER CANTIERE ---
     st.subheader("📋 Report Costi per Cantiere")
-    st.write("Riepilogo delle spese di Personale e Materiali suddivise per cantiere.")
+    st.write("Riepilogo delle spese di Personale, Materiali e Amministrative suddivise per periodo e cantiere.")
 
-    # Query che prende SOLO i cantieri e i loro costi specifici
-    query_report = """
+    # --- FILTRO PERIODO ---
+    col_date1, col_date2 = st.columns(2)
+    data_inizio_report = col_date1.date_input("Dal", value=datetime.date.today().replace(day=1), key="data_inizio_report")
+    data_fine_report = col_date2.date_input("Al", value=datetime.date.today(), key="data_fine_report")
+
+    # Query che prende SOLO i cantieri e i loro costi specifici, filtrati per data
+    query_report = f"""
         SELECT 
             p.indirizzo as Cantiere,
-            COALESCE((SELECT SUM(totale) FROM costo_manodopera WHERE cantiere_id = p.id), 0) as Costo_Personale,
-            COALESCE((SELECT SUM(totale) FROM costo_materiali WHERE cantiere_id = p.id), 0) as Costo_Materiale
+            COALESCE((SELECT SUM(totale) FROM costo_manodopera WHERE cantiere_id = p.id AND data >= '{data_inizio_report}' AND data <= '{data_fine_report}'), 0) as Costo_Personale,
+            COALESCE((SELECT SUM(totale) FROM costo_materiali WHERE cantiere_id = p.id AND data >= '{data_inizio_report}' AND data <= '{data_fine_report}'), 0) as Costo_Materiale
         FROM preventivi p
         WHERE p.stato = 'Attivo'
     """
@@ -798,10 +803,11 @@ def page_riepilogo():
     # --- SEZIONE SPESE AMMINISTRATIVE (Dettaglio per Descrizione) ---
     st.markdown("#### 🏢 Spese Generali (Amministrative)")
     
-    # Query che raggruppa per descrizione
-    query_amm_dettaglio = """
+    # Query che raggruppa per descrizione, filtrata per data
+    query_amm_dettaglio = f"""
         SELECT descrizione as Descrizione, SUM(importo) as Totale
         FROM costo_amministrativo
+        WHERE data >= '{data_inizio_report}' AND data <= '{data_fine_report}'
         GROUP BY descrizione
         ORDER BY Totale DESC
     """
@@ -809,7 +815,7 @@ def page_riepilogo():
     
     if df_amm.empty:
         tot_amministrativo = 0
-        st.info("Nessuna spesa amministrativa registrata.")
+        st.info("Nessuna spesa amministrativa registrata nel periodo selezionato.")
     else:
         tot_amministrativo = df_amm['Totale'].sum()
         
@@ -839,12 +845,12 @@ def page_riepilogo():
             from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
             from reportlab.lib.styles import getSampleStyleSheet
             
-            filename = f"Report_Costi_{datetime.date.today()}.pdf"
+            filename = f"Report_Costi_{data_inizio_report}_al_{data_fine_report}.pdf"
             doc = SimpleDocTemplate(filename, pagesize=landscape(A4))
             elements = []
             styles = getSampleStyleSheet()
             
-            elements.append(Paragraph("Report Costi per Cantiere", styles['Title']))
+            elements.append(Paragraph(f"Report Costi dal {data_inizio_report} al {data_fine_report}", styles['Title']))
             elements.append(Spacer(1, 12))
             
             # 1. Tabella Cantieri
