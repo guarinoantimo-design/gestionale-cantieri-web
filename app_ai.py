@@ -727,6 +727,7 @@ def page_riepilogo():
     
     conn = get_connection()
     
+    # --- TOTALI AZIENDALI ---
     query_totali = """
         SELECT 
             (SELECT SUM(importo_contratto) FROM preventivi WHERE stato = 'Attivo') as tot_contratti,
@@ -751,8 +752,119 @@ def page_riepilogo():
     
     st.divider()
 
-    st.markdown("### 🔍 Dettaglio Cantiere")
+    # --- REPORT COSTI PER CANTIERE ---
+    st.subheader("📋 Report Costi per Cantiere")
+    st.write("Riepilogo di tutte le spese suddivise per cantiere e categoria.")
+
+    # Query che raggruppa i costi per cantiere
+    query_report = """
+        SELECT 
+            p.indirizzo as Cantiere,
+            COALESCE((SELECT SUM(totale) FROM costo_manodopera WHERE cantiere_id = p.id), 0) as Costo_Personale,
+            COALESCE((SELECT SUM(totale) FROM costo_materiali WHERE cantiere_id = p.id), 0) as Costo_Materiale,
+            0 as Costo_Amministrativo
+        FROM preventivi p
+        WHERE p.stato = 'Attivo'
+        UNION ALL
+        SELECT 
+            'Spese Generali (Amministrative)' as Cantiere,
+            0 as Costo_Personale,
+            0 as Costo_Materiale,
+            COALESCE(SUM(importo), 0) as Costo_Amministrativo
+        FROM costo_amministrativo
+        HAVING Costo_Amministrativo > 0
+    """
+    df_report = pd.read_sql_query(query_report, conn)
+    conn.close()
+
+    if df_report.empty:
+        st.info("Nessun costo registrato.")
+    else:
+        # Aggiungiamo le colonne calcolate e i totali
+        df_report['Totale Cantiere'] = df_report['Costo_Personale'] + df_report['Costo_Materiale'] + df_report['Costo_Amministrativo']
+        
+        # Calcoliamo i totali generali
+        totale_personale = df_report['Costo_Personale'].sum()
+        totale_materiale = df_report['Costo_Materiale'].sum()
+        totale_amministrativo = df_report['Costo_Amministrativo'].sum()
+        totale_generale = df_report['Totale Cantiere'].sum()
+        
+        # Aggiungiamo riga totale
+        df_report.loc['Totale'] = ['TOTALE GENERALE', totale_personale, totale_materiale, totale_amministrativo, totale_generale]
+        
+        # Formattiamo i numeri
+        df_report['Costo_Personale'] = df_report['Costo_Personale'].apply(lambda x: f"€ {x:,.2f}")
+        df_report['Costo_Materiale'] = df_report['Costo_Materiale'].apply(lambda x: f"€ {x:,.2f}")
+        df_report['Costo_Amministrativo'] = df_report['Costo_Amministrativo'].apply(lambda x: f"€ {x:,.2f}")
+        df_report['Totale Cantiere'] = df_report['Totale Cantiere'].apply(lambda x: f"€ {x:,.2f}")
+        
+        # Rinominiamo le colonne per la visualizzazione
+        df_report = df_report.rename(columns={
+            'Costo_Personale': 'Costo Personale',
+            'Costo_Materiale': 'Costo Materiale',
+            'Costo_Amministrativo': 'Costo Amministrativo'
+        })
+        
+        st.dataframe(df_report, use_container_width=True)
+
+        # --- PULSANTE PER PDF ---
+        if st.button("📄 Esporta Report Costi in PDF", type="primary", key="btn_export_report_costi"):
+            try:
+                from reportlab.lib.pagesizes import A4, landscape
+                from reportlab.pdfgen import canvas
+                from reportlab.lib import colors
+                from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+                from reportlab.lib.styles import getSampleStyleSheet
+                
+                filename = f"Report_Costi_{datetime.date.today()}.pdf"
+                doc = SimpleDocTemplate(filename, pagesize=landscape(A4))
+                elements = []
+                styles = getSampleStyleSheet()
+                
+                elements.append(Paragraph("Report Costi per Cantiere", styles['Title']))
+                elements.append(Spacer(1, 12))
+                
+                # Costruiamo la tabella per il PDF
+                data_rows = [["Cantiere", "Costo Personale", "Costo Materiale", "Costo Amministrativo", "Totale Cantiere"]]
+                for index, row in df_report.iterrows():
+                    # Se è la riga del totale, saltiamo i simboli € per allineamento
+                    if index == 'Totale':
+                        data_rows.append([row['Cantiere'], row['Costo Personale'], row['Costo Materiale'], row['Costo Amministrativo'], row['Totale Cantiere']])
+                    else:
+                        data_rows.append([row['Cantiere'], row['Costo Personale'], row['Costo Materiale'], row['Costo Amministrativo'], row['Totale Cantiere']])
+                
+                t = Table(data_rows, colWidths=[200, 100, 100, 120, 120])
+                t.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                    ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#F4F6F7")),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#BDC3C7")),
+                    ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                ]))
+                elements.append(t)
+                
+                doc.build(elements)
+                st.success(f"PDF generato: {filename}")
+                
+                with open(filename, "rb") as f:
+                    st.download_button(
+                        label="⬇️ Scarica il PDF",
+                        data=f,
+                        file_name=filename,
+                        mime="application/pdf"
+                    )
+            except Exception as e:
+                st.error(f"Errore durante la generazione del PDF: {e}")
+
+    st.divider()
+
+    # --- GRAFICI ESISTENTI ---
+    st.subheader("📈 Andamento Economico")
     df_cantieri = pd.read_sql_query("SELECT id, indirizzo FROM preventivi", conn)
+    # ... (il resto della funzione rimane invariato)
     
     if df_cantieri.empty:
         st.info("Nessun cantiere presente.")
