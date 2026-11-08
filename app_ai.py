@@ -769,6 +769,7 @@ def page_riepilogo():
 
     if df_report.empty:
         st.info("Nessun cantiere attivo trovato.")
+        tot_generale_cantieri = 0
     else:
         # Calcoliamo il totale per ogni cantiere
         df_report['Totale Cantiere'] = df_report['Costo_Personale'] + df_report['Costo_Materiale']
@@ -794,86 +795,127 @@ def page_riepilogo():
         
         st.dataframe(df_report_visual, use_container_width=True)
 
-        # --- SEZIONE SPESE AMMINISTRATIVE (Separata) ---
-        st.markdown("#### 🏢 Spese Generali (Amministrative)")
-        query_amm = "SELECT COALESCE(SUM(importo), 0) as Totale_Amm FROM costo_amministrativo"
-        res_amm = pd.read_sql_query(query_amm, conn).iloc[0]
-        tot_amministrativo = res_amm['Totale_Amm']
+    # --- SEZIONE SPESE AMMINISTRATIVE (Dettaglio per Descrizione) ---
+    st.markdown("#### 🏢 Spese Generali (Amministrative)")
+    
+    # Query che raggruppa per descrizione
+    query_amm_dettaglio = """
+        SELECT descrizione as Descrizione, SUM(importo) as Totale
+        FROM costo_amministrativo
+        GROUP BY descrizione
+        ORDER BY Totale DESC
+    """
+    df_amm = pd.read_sql_query(query_amm_dettaglio, conn)
+    
+    if df_amm.empty:
+        tot_amministrativo = 0
+        st.info("Nessuna spesa amministrativa registrata.")
+    else:
+        tot_amministrativo = df_amm['Totale'].sum()
         
-        col_amm1, col_amm2 = st.columns([1, 3])
-        with col_amm1:
-            st.metric("Totale Spese Generali", f"€ {tot_amministrativo:,.2f}")
-        with col_amm2:
-            st.info("Queste spese non sono legate a un cantiere specifico e vengono conteggiate nel totale aziendale.")
+        # Aggiungiamo la riga del totale
+        df_amm.loc['Totale'] = ['TOTALE SPESE GENERALI', tot_amministrativo]
+        
+        # Formattiamo i numeri
+        df_amm_visual = df_amm.copy()
+        df_amm_visual['Totale'] = df_amm_visual['Totale'].apply(lambda x: f"€ {x:,.2f}")
+        
+        # Mostriamo la tabella
+        st.dataframe(df_amm_visual, use_container_width=True)
+        
+        st.info("Queste spese non sono legate a un cantiere specifico e vengono conteggiate nel totale aziendale.")
 
-        # --- TOTALE GENERALE ASSOLUTO ---
-        st.markdown("---")
-        totale_assoluto = tot_generale_cantieri + tot_amministrativo
-        st.markdown(f"### 💰 Totale Generale Assoluto (Cantieri + Amministrative): **€ {totale_assoluto:,.2f}**")
+    # --- TOTALE GENERALE ASSOLUTO ---
+    st.markdown("---")
+    totale_assoluto = tot_generale_cantieri + tot_amministrativo
+    st.markdown(f"### 💰 Totale Generale Assoluto (Cantieri + Amministrative): **€ {totale_assoluto:,.2f}**")
 
-        # --- PULSANTE PER PDF ---
-        if st.button("📄 Esporta Report Costi in PDF", type="primary", key="btn_export_report_costi"):
-            try:
-                from reportlab.lib.pagesizes import A4, landscape
-                from reportlab.pdfgen import canvas
-                from reportlab.lib import colors
-                from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-                from reportlab.lib.styles import getSampleStyleSheet
-                
-                filename = f"Report_Costi_{datetime.date.today()}.pdf"
-                doc = SimpleDocTemplate(filename, pagesize=landscape(A4))
-                elements = []
-                styles = getSampleStyleSheet()
-                
-                elements.append(Paragraph("Report Costi per Cantiere", styles['Title']))
-                elements.append(Spacer(1, 12))
-                
-                # 1. Tabella Cantieri
-                data_rows = [["Cantiere", "Costo Personale", "Costo Materiale", "Totale Cantiere"]]
-                for index, row in df_report.iterrows():
-                    data_rows.append([
-                        row['Cantiere'], 
-                        f"€ {row['Costo_Personale']:,.2f}", 
-                        f"€ {row['Costo_Materiale']:,.2f}", 
-                        f"€ {row['Totale Cantiere']:,.2f}"
+    # --- PULSANTE PER PDF ---
+    if st.button("📄 Esporta Report Costi in PDF", type="primary", key="btn_export_report_costi"):
+        try:
+            from reportlab.lib.pagesizes import A4, landscape
+            from reportlab.pdfgen import canvas
+            from reportlab.lib import colors
+            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+            from reportlab.lib.styles import getSampleStyleSheet
+            
+            filename = f"Report_Costi_{datetime.date.today()}.pdf"
+            doc = SimpleDocTemplate(filename, pagesize=landscape(A4))
+            elements = []
+            styles = getSampleStyleSheet()
+            
+            elements.append(Paragraph("Report Costi per Cantiere", styles['Title']))
+            elements.append(Spacer(1, 12))
+            
+            # 1. Tabella Cantieri
+            data_rows = [["Cantiere", "Costo Personale", "Costo Materiale", "Totale Cantiere"]]
+            for index, row in df_report.iterrows():
+                data_rows.append([
+                    row['Cantiere'], 
+                    f"€ {row['Costo_Personale']:,.2f}", 
+                    f"€ {row['Costo_Materiale']:,.2f}", 
+                    f"€ {row['Totale Cantiere']:,.2f}"
+                ])
+            
+            t = Table(data_rows, colWidths=[200, 120, 120, 120])
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#F4F6F7")),
+                ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor("#E0E0E0")),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#BDC3C7")),
+                ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+            ]))
+            elements.append(t)
+            elements.append(Spacer(1, 20))
+            
+            # 2. Tabella Spese Amministrative
+            elements.append(Paragraph("Spese Generali (Amministrative)", styles['Heading2']))
+            elements.append(Spacer(1, 5))
+            
+            if not df_amm.empty:
+                data_amm = [["Descrizione", "Totale"]]
+                for index, row in df_amm.iterrows():
+                    data_amm.append([
+                        row['Descrizione'], 
+                        f"€ {row['Totale']:,.2f}"
                     ])
                 
-                t = Table(data_rows, colWidths=[200, 120, 120, 120])
-                t.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
+                t_amm = Table(data_amm, colWidths=[300, 150])
+                t_amm.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#7F8C8D")),
                     ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                     ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                     ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
                     ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#F4F6F7")),
                     ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor("#E0E0E0")),
                     ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#BDC3C7")),
                     ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
                 ]))
-                elements.append(t)
-                elements.append(Spacer(1, 20))
-                
-                # 2. Sezione Spese Amministrative
-                elements.append(Paragraph(f"Spese Generali (Amministrative): € {tot_amministrativo:,.2f}", styles['Normal']))
-                elements.append(Spacer(1, 10))
-                
-                # 3. Totale Assoluto
-                elements.append(Paragraph(f"<b>Totale Generale Assoluto: € {totale_assoluto:,.2f}</b>", styles['Heading2']))
-                
-                doc.build(elements)
-                st.success(f"PDF generato: {filename}")
-                
-                with open(filename, "rb") as f:
-                    st.download_button(
-                        label="⬇️ Scarica il PDF",
-                        data=f,
-                        file_name=filename,
-                        mime="application/pdf"
-                    )
-            except Exception as e:
-                st.error(f"Errore durante la generazione del PDF: {e}")
+                elements.append(t_amm)
+            
+            elements.append(Spacer(1, 20))
+            
+            # 3. Totale Assoluto
+            elements.append(Paragraph(f"<b>Totale Generale Assoluto: € {totale_assoluto:,.2f}</b>", styles['Heading2']))
+            
+            doc.build(elements)
+            st.success(f"PDF generato: {filename}")
+            
+            with open(filename, "rb") as f:
+                st.download_button(
+                    label="⬇️ Scarica il PDF",
+                    data=f,
+                    file_name=filename,
+                    mime="application/pdf"
+                )
+        except Exception as e:
+            st.error(f"Errore durante la generazione del PDF: {e}")
 
-    st.divider()
+    st.divider()   
 
     # --- GRAFICI ESISTENTI ---
     st.subheader("📈 Andamento Economico")
