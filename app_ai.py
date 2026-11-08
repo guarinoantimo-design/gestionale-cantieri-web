@@ -592,7 +592,7 @@ def page_costi():
         col_f1, col_f2, col_f3, col_f4 = st.columns(4)
         filtro_testo = col_f1.text_input("Cerca (Operaio/Fornitore/Cantiere)", placeholder="Scrivi qui...")
         filtro_tipo = col_f2.selectbox("Tipo di costo", ["Tutti", "Personale", "Materiale", "Amministrativo"])
-        data_inizio = col_f3.date_input("Dal", value=datetime.date(2000, 1, 1), format="DD/MM/YYYY")
+        data_inizio = col_f3.date_input("Dal", value=datetime.date.today().replace(day=1), format="DD/MM/YYYY")
         data_fine = col_f4.date_input("Al", value=datetime.date.today(), format="DD/MM/YYYY")
     
     query_pers = f"""
