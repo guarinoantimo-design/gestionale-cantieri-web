@@ -754,51 +754,62 @@ def page_riepilogo():
 
     # --- REPORT COSTI PER CANTIERE ---
     st.subheader("📋 Report Costi per Cantiere")
-    st.write("Riepilogo di tutte le spese suddivise per cantiere e categoria.")
+    st.write("Riepilogo delle spese di Personale e Materiali suddivise per cantiere.")
 
+    # Query che prende SOLO i cantieri e i loro costi specifici
     query_report = """
         SELECT 
             p.indirizzo as Cantiere,
             COALESCE((SELECT SUM(totale) FROM costo_manodopera WHERE cantiere_id = p.id), 0) as Costo_Personale,
-            COALESCE((SELECT SUM(totale) FROM costo_materiali WHERE cantiere_id = p.id), 0) as Costo_Materiale,
-            0 as Costo_Amministrativo
+            COALESCE((SELECT SUM(totale) FROM costo_materiali WHERE cantiere_id = p.id), 0) as Costo_Materiale
         FROM preventivi p
         WHERE p.stato = 'Attivo'
-        UNION ALL
-        SELECT 
-            'Spese Generali (Amministrative)' as Cantiere,
-            0 as Costo_Personale,
-            0 as Costo_Materiale,
-            COALESCE(SUM(importo), 0) as Costo_Amministrativo
-        FROM costo_amministrativo
-        HAVING Costo_Amministrativo > 0
     """
     df_report = pd.read_sql_query(query_report, conn)
 
     if df_report.empty:
-        st.info("Nessun costo registrato.")
+        st.info("Nessun cantiere attivo trovato.")
     else:
-        df_report['Totale Cantiere'] = df_report['Costo_Personale'] + df_report['Costo_Materiale'] + df_report['Costo_Amministrativo']
+        # Calcoliamo il totale per ogni cantiere
+        df_report['Totale Cantiere'] = df_report['Costo_Personale'] + df_report['Costo_Materiale']
         
-        totale_personale = df_report['Costo_Personale'].sum()
-        totale_materiale = df_report['Costo_Materiale'].sum()
-        totale_amministrativo = df_report['Costo_Amministrativo'].sum()
-        totale_generale = df_report['Totale Cantiere'].sum()
+        # Calcoliamo i totali generali dei cantieri
+        tot_personale_cantieri = df_report['Costo_Personale'].sum()
+        tot_materiale_cantieri = df_report['Costo_Materiale'].sum()
+        tot_generale_cantieri = df_report['Totale Cantiere'].sum()
         
-        df_report.loc['Totale'] = ['TOTALE GENERALE', totale_personale, totale_materiale, totale_amministrativo, totale_generale]
+        # Aggiungiamo la riga del totale cantieri
+        df_report.loc['Totale Cantieri'] = ['TOTALE CANTIERI', tot_personale_cantieri, tot_materiale_cantieri, tot_generale_cantieri]
         
-        df_report['Costo_Personale'] = df_report['Costo_Personale'].apply(lambda x: f"€ {x:,.2f}")
-        df_report['Costo_Materiale'] = df_report['Costo_Materiale'].apply(lambda x: f"€ {x:,.2f}")
-        df_report['Costo_Amministrativo'] = df_report['Costo_Amministrativo'].apply(lambda x: f"€ {x:,.2f}")
-        df_report['Totale Cantiere'] = df_report['Totale Cantiere'].apply(lambda x: f"€ {x:,.2f}")
-        
-        df_report = df_report.rename(columns={
+        # Formattiamo i numeri per la visualizzazione
+        df_report_visual = df_report.copy()
+        for col in ['Costo_Personale', 'Costo_Materiale', 'Totale Cantiere']:
+            df_report_visual[col] = df_report_visual[col].apply(lambda x: f"€ {x:,.2f}")
+            
+        # Rinominiamo le colonne
+        df_report_visual = df_report_visual.rename(columns={
             'Costo_Personale': 'Costo Personale',
-            'Costo_Materiale': 'Costo Materiale',
-            'Costo_Amministrativo': 'Costo Amministrativo'
+            'Costo_Materiale': 'Costo Materiale'
         })
         
-        st.dataframe(df_report, use_container_width=True)
+        st.dataframe(df_report_visual, use_container_width=True)
+
+        # --- SEZIONE SPESE AMMINISTRATIVE (Separata) ---
+        st.markdown("#### 🏢 Spese Generali (Amministrative)")
+        query_amm = "SELECT COALESCE(SUM(importo), 0) as Totale_Amm FROM costo_amministrativo"
+        res_amm = pd.read_sql_query(query_amm, conn).iloc[0]
+        tot_amministrativo = res_amm['Totale_Amm']
+        
+        col_amm1, col_amm2 = st.columns([1, 3])
+        with col_amm1:
+            st.metric("Totale Spese Generali", f"€ {tot_amministrativo:,.2f}")
+        with col_amm2:
+            st.info("Queste spese non sono legate a un cantiere specifico e vengono conteggiate nel totale aziendale.")
+
+        # --- TOTALE GENERALE ASSOLUTO ---
+        st.markdown("---")
+        totale_assoluto = tot_generale_cantieri + tot_amministrativo
+        st.markdown(f"### 💰 Totale Generale Assoluto (Cantieri + Amministrative): **€ {totale_assoluto:,.2f}**")
 
         # --- PULSANTE PER PDF ---
         if st.button("📄 Esporta Report Costi in PDF", type="primary", key="btn_export_report_costi"):
@@ -817,11 +828,17 @@ def page_riepilogo():
                 elements.append(Paragraph("Report Costi per Cantiere", styles['Title']))
                 elements.append(Spacer(1, 12))
                 
-                data_rows = [["Cantiere", "Costo Personale", "Costo Materiale", "Costo Amministrativo", "Totale Cantiere"]]
+                # 1. Tabella Cantieri
+                data_rows = [["Cantiere", "Costo Personale", "Costo Materiale", "Totale Cantiere"]]
                 for index, row in df_report.iterrows():
-                    data_rows.append([row['Cantiere'], row['Costo Personale'], row['Costo Materiale'], row['Costo Amministrativo'], row['Totale Cantiere']])
+                    data_rows.append([
+                        row['Cantiere'], 
+                        f"€ {row['Costo_Personale']:,.2f}", 
+                        f"€ {row['Costo_Materiale']:,.2f}", 
+                        f"€ {row['Totale Cantiere']:,.2f}"
+                    ])
                 
-                t = Table(data_rows, colWidths=[200, 100, 100, 120, 120])
+                t = Table(data_rows, colWidths=[200, 120, 120, 120])
                 t.setStyle(TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
                     ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -829,10 +846,19 @@ def page_riepilogo():
                     ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
                     ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
                     ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#F4F6F7")),
+                    ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor("#E0E0E0")),
                     ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#BDC3C7")),
                     ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
                 ]))
                 elements.append(t)
+                elements.append(Spacer(1, 20))
+                
+                # 2. Sezione Spese Amministrative
+                elements.append(Paragraph(f"Spese Generali (Amministrative): € {tot_amministrativo:,.2f}", styles['Normal']))
+                elements.append(Spacer(1, 10))
+                
+                # 3. Totale Assoluto
+                elements.append(Paragraph(f"<b>Totale Generale Assoluto: € {totale_assoluto:,.2f}</b>", styles['Heading2']))
                 
                 doc.build(elements)
                 st.success(f"PDF generato: {filename}")
