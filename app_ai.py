@@ -23,6 +23,8 @@ def get_connection():
 def init_db():
     conn = get_connection()
     c = conn.cursor()
+    
+    # Creazione tabelle (se non esistono)
     c.execute("CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password_hash TEXT)")
     c.execute("""
         CREATE TABLE IF NOT EXISTS preventivi (
@@ -41,6 +43,14 @@ def init_db():
     c.execute("CREATE TABLE IF NOT EXISTS incassi (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, fattura TEXT, imponibile REAL, iva REAL, totale REAL)")
     c.execute("CREATE TABLE IF NOT EXISTS avanzamento (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, descrizione TEXT, importo REAL)")
     
+    # --- AGGIORNAMENTO AUTOMATICO PER DATABASE VECCHI ---
+    # Aggiunge colonne mancanti se il database è di una versione precedente
+    try:
+        c.execute("ALTER TABLE preventivi ADD COLUMN stato TEXT DEFAULT 'Attivo'")
+    except sqlite3.OperationalError:
+        pass  # La colonna esiste già
+    
+    # Creazione utente admin se non esiste
     c.execute("SELECT * FROM users WHERE username = 'admin'")
     if not c.fetchone():
         hashed_pw = hashlib.sha256("Cantieri2024!".encode()).hexdigest()
