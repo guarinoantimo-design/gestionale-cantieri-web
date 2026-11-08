@@ -6,7 +6,6 @@ import hashlib
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import re
 import os
 
 # --- CONFIGURAZIONE PAGINA ---
@@ -15,8 +14,8 @@ st.set_page_config(page_title="Gestionale Cantieri", page_icon="🏗️", layout
 DB_NAME = "gestionale_web_v2.db"
 
 # --- FUNZIONI DATABASE ---
-@st.cache_resource
 def get_connection():
+    # Connessione standard, gestita in modo sicuro all'interno di ogni pagina
     conn = sqlite3.connect(DB_NAME, check_same_thread=False)
     return conn
 
@@ -24,7 +23,6 @@ def init_db():
     conn = get_connection()
     c = conn.cursor()
     
-    # Creazione tabelle
     c.execute("CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password_hash TEXT)")
     c.execute("""
         CREATE TABLE IF NOT EXISTS preventivi (
@@ -41,10 +39,8 @@ def init_db():
     c.execute("CREATE TABLE IF NOT EXISTS costo_amministrativo (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, descrizione TEXT, importo REAL)")
     c.execute("CREATE TABLE IF NOT EXISTS categorie_amministrative (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT UNIQUE)")
     c.execute("CREATE TABLE IF NOT EXISTS incassi (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, fattura TEXT, imponibile REAL, iva REAL, totale REAL)")
-    # Tabella avanzamento rimane per retrocompatibilità, ma non verrà più popolata manualmente
-    c.execute("CREATE TABLE IF NOT EXISTS avanzamento (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, descrizione TEXT, importo REAL)")
     
-    # Aggiornamento automatico per database vecchi
+    # Aggiornamento automatico per database vecchi (aggiunge colonna stato se manca)
     try:
         c.execute("ALTER TABLE preventivi ADD COLUMN stato TEXT DEFAULT 'Attivo'")
     except sqlite3.OperationalError:
@@ -57,6 +53,7 @@ def init_db():
         c.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", ("admin", hashed_pw))
     
     conn.commit()
+    conn.close()
 
 init_db()
 
@@ -77,6 +74,7 @@ def verify_login(username, password):
     hashed_pw = hashlib.sha256(password.encode()).hexdigest()
     c.execute("SELECT * FROM users WHERE username = ? AND password_hash = ?", (username, hashed_pw))
     user = c.fetchone()
+    conn.close()
     return user is not None
 
 if 'logged_in' not in st.session_state:
@@ -104,16 +102,19 @@ def login_page():
 def get_cantieri():
     conn = get_connection()
     df = pd.read_sql_query("SELECT id, indirizzo FROM preventivi", conn)
+    conn.close()
     return df
 
 def get_operai():
     conn = get_connection()
     df = pd.read_sql_query("SELECT * FROM operai", conn)
+    conn.close()
     return df
 
 def get_fornitori():
     conn = get_connection()
     df = pd.read_sql_query("SELECT * FROM fornitori", conn)
+    conn.close()
     return df
 
 # --- PAGINE ---
@@ -131,6 +132,7 @@ def page_home():
             (SELECT SUM(importo) FROM costo_amministrativo) as tot_costi_amm
     """
     res = pd.read_sql_query(query_totali, conn).iloc[0]
+    conn.close()
     
     num_cantieri = res['num_cantieri'] or 0
     tot_incassi = res['tot_incassi'] or 0
@@ -150,8 +152,6 @@ def page_home():
     st.divider()
     
     st.subheader("🚀 Accessi Rapidi")
-    st.write("Seleziona una sezione per iniziare a lavorare.")
-    
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
         if st.button("📋 Inserisci Cantieri", use_container_width=True, key="home_btn_cantieri"):
@@ -190,7 +190,7 @@ def page_cantieri():
                     conn = get_connection(); c = conn.cursor()
                     c.execute("INSERT INTO preventivi (data, n_prev, cliente, indirizzo, piva, descrizione, importo_prev, importo_contratto) VALUES (?,?,?,?,?,?,?,?)", 
                               (str(data), n_prev, cliente, indirizzo, piva, descrizione, importo_prev, importo_contratto))
-                    conn.commit()
+                    conn.commit(); conn.close()
                     st.success("Cantiere inserito!"); st.rerun()
                 else:
                     st.error("Cliente e Indirizzo sono obbligatori.")
@@ -198,6 +198,7 @@ def page_cantieri():
     st.divider()
     conn = get_connection()
     df = pd.read_sql_query("SELECT id, data, n_prev, cliente, indirizzo, descrizione, importo_prev, importo_contratto, stato FROM preventivi", conn)
+    conn.close()
     
     if not df.empty:
         df['data'] = df['data'].apply(formatta_data_italiana)
@@ -214,12 +215,12 @@ def page_cantieri():
             if col_az1.button("🔴 Chiudi Cantiere", use_container_width=True, key="btn_chiudi_cant"):
                 conn = get_connection(); c = conn.cursor()
                 c.execute("UPDATE preventivi SET stato='Chiuso' WHERE id=?", (cantiere_sel,))
-                conn.commit(); st.rerun()
+                conn.commit(); conn.close(); st.rerun()
         else:
             if col_az1.button("🟢 Riapri Cantiere", use_container_width=True, key="btn_riapri_cant"):
                 conn = get_connection(); c = conn.cursor()
                 c.execute("UPDATE preventivi SET stato='Attivo' WHERE id=?", (cantiere_sel,))
-                conn.commit(); st.rerun()
+                conn.commit(); conn.close(); st.rerun()
         
         with col_az2:
             if st.button("🗑️ Elimina Cantiere", type="primary", use_container_width=True, key="btn_elimina_cant"):
@@ -230,7 +231,7 @@ def page_cantieri():
             if st.button("Sì, elimina definitivamente", key="btn_conferma_elimina_cant"):
                 conn = get_connection(); c = conn.cursor()
                 c.execute("DELETE FROM preventivi WHERE id=?", (cantiere_sel,))
-                conn.commit()
+                conn.commit(); conn.close()
                 st.session_state.confirm_delete_cantiere = False
                 st.success("Cantiere eliminato."); st.rerun()
 
@@ -246,7 +247,7 @@ def page_cantieri():
                     conn = get_connection(); c = conn.cursor()
                     c.execute("UPDATE preventivi SET cliente=?, indirizzo=?, descrizione=?, importo_prev=?, importo_contratto=? WHERE id=?", 
                               (m_cliente, m_indirizzo, m_descrizione, m_importo_prev, m_importo, cantiere_sel))
-                    conn.commit(); st.success("Modifiche salvate!"); st.rerun()
+                    conn.commit(); conn.close(); st.success("Modifiche salvate!"); st.rerun()
     else:
         st.info("Nessun cantiere presente.")
 
@@ -264,10 +265,11 @@ def page_anagrafiche():
                     if nome:
                         conn = get_connection(); c = conn.cursor()
                         c.execute("INSERT INTO operai (nome, ruolo, costo_orario) VALUES (?,?,?)", (nome, ruolo, costo))
-                        conn.commit(); st.success("Operaio aggiunto!"); st.rerun()
+                        conn.commit(); conn.close(); st.success("Operaio aggiunto!"); st.rerun()
         
         conn = get_connection()
         df_op = pd.read_sql_query("SELECT * FROM operai", conn)
+        conn.close()
         st.dataframe(df_op, use_container_width=True)
         
         if not df_op.empty:
@@ -283,12 +285,12 @@ def page_anagrafiche():
                     if st.form_submit_button("Salva Modifiche"):
                         conn = get_connection(); c = conn.cursor()
                         c.execute("UPDATE operai SET ruolo=?, costo_orario=? WHERE nome=?", (new_ruolo, new_costo, op_sel))
-                        conn.commit(); st.success("Modifiche salvate!"); st.rerun()
+                        conn.commit(); conn.close(); st.success("Modifiche salvate!"); st.rerun()
             with col2:
                 if st.button("Elimina Operaio", type="primary", key="btn_elimina_operaio"):
                     conn = get_connection(); c = conn.cursor()
                     c.execute("DELETE FROM operai WHERE nome=?", (op_sel,))
-                    conn.commit(); st.success("Operaio eliminato!"); st.rerun()
+                    conn.commit(); conn.close(); st.success("Operaio eliminato!"); st.rerun()
 
     with tab2:
         with st.expander("➕ Nuovo Fornitore"):
@@ -300,10 +302,11 @@ def page_anagrafiche():
                     if nome_f:
                         conn = get_connection(); c = conn.cursor()
                         c.execute("INSERT INTO fornitori (nome, piva, contatto) VALUES (?,?,?)", (nome_f, piva_f, contatto))
-                        conn.commit(); st.success("Fornitore aggiunto!"); st.rerun()
+                        conn.commit(); conn.close(); st.success("Fornitore aggiunto!"); st.rerun()
         
         conn = get_connection()
         df_forn = pd.read_sql_query("SELECT * FROM fornitori", conn)
+        conn.close()
         st.dataframe(df_forn, use_container_width=True)
         
         if not df_forn.empty:
@@ -319,12 +322,12 @@ def page_anagrafiche():
                     if st.form_submit_button("Salva Modifiche"):
                         conn = get_connection(); c = conn.cursor()
                         c.execute("UPDATE fornitori SET piva=?, contatto=? WHERE nome=?", (new_piva, new_contatto, forn_sel))
-                        conn.commit(); st.success("Modifiche salvate!"); st.rerun()
+                        conn.commit(); conn.close(); st.success("Modifiche salvate!"); st.rerun()
             with col2:
                 if st.button("Elimina Fornitore", type="primary", key="btn_elimina_fornitore"):
                     conn = get_connection(); c = conn.cursor()
                     c.execute("DELETE FROM fornitori WHERE nome=?", (forn_sel,))
-                    conn.commit(); st.success("Fornitore eliminato!"); st.rerun()
+                    conn.commit(); conn.close(); st.success("Fornitore eliminato!"); st.rerun()
 
     with tab3:
         with st.expander("➕ Nuova Categoria di Spesa"):
@@ -338,10 +341,11 @@ def page_anagrafiche():
                             conn.commit(); st.success("Categoria aggiunta!")
                         except sqlite3.IntegrityError:
                             st.error("Questa categoria esiste già.")
-                        st.rerun()
+                        conn.close(); st.rerun()
         
         conn = get_connection()
         df_cat = pd.read_sql_query("SELECT * FROM categorie_amministrative", conn)
+        conn.close()
         st.dataframe(df_cat, use_container_width=True)
         
         if not df_cat.empty:
@@ -355,12 +359,12 @@ def page_anagrafiche():
                     if st.form_submit_button("Rinomina"):
                         conn = get_connection(); c = conn.cursor()
                         c.execute("UPDATE categorie_amministrative SET nome=? WHERE nome=?", (new_nome, cat_sel))
-                        conn.commit(); st.success("Categoria rinominata!"); st.rerun()
+                        conn.commit(); conn.close(); st.success("Categoria rinominata!"); st.rerun()
             with col2:
                 if st.button("Elimina Categoria", type="primary", key="btn_elimina_categoria"):
                     conn = get_connection(); c = conn.cursor()
                     c.execute("DELETE FROM categorie_amministrative WHERE nome=?", (cat_sel,))
-                    conn.commit(); st.success("Categoria eliminata!"); st.rerun()
+                    conn.commit(); conn.close(); st.success("Categoria eliminata!"); st.rerun()
 
 def page_costi():
     st.title("📉 Inserimento Costi")
@@ -399,7 +403,7 @@ def page_costi():
                 conn = get_connection(); c = conn.cursor()
                 c.execute("INSERT INTO costo_manodopera (data, cantiere_id, operaio, ore, costo_orario, totale) VALUES (?,?,?,?,?,?)", 
                           (str(data_m), cantiere_m, operaio_sel, ore, costo_orario, totale))
-                conn.commit(); st.success("Costo personale registrato!"); st.rerun()
+                conn.commit(); conn.close(); st.success("Costo personale registrato!"); st.rerun()
         else:
             st.info("Nessun operaio in anagrafica.")
 
@@ -431,7 +435,7 @@ def page_costi():
                     conn = get_connection(); c = conn.cursor()
                     c.execute("INSERT INTO costo_materiali (data, cantiere_id, fornitore, documento, imponibile, iva, totale) VALUES (?,?,?,?,?,?,?)", 
                               (str(data_mat), cantiere_mat, fornitore_sel, documento, imponibile, iva, totale))
-                    conn.commit(); st.success("Costo materiale registrato!"); st.rerun()
+                    conn.commit(); conn.close(); st.success("Costo materiale registrato!"); st.rerun()
                 else:
                     st.error("Devi prima selezionare un fornitore.")
 
@@ -441,6 +445,7 @@ def page_costi():
         
         conn = get_connection()
         df_cat = pd.read_sql_query("SELECT nome FROM categorie_amministrative", conn)
+        conn.close()
         
         with st.form("form_amministrativo", clear_on_submit=True):
             col1, col2 = st.columns(2)
@@ -459,7 +464,7 @@ def page_costi():
                     conn = get_connection(); c = conn.cursor()
                     c.execute("INSERT INTO costo_amministrativo (data, descrizione, importo) VALUES (?,?,?)", 
                               (str(data_amm), desc_amm, importo_amm))
-                    conn.commit(); st.success("Costo amministrativo registrato!"); st.rerun()
+                    conn.commit(); conn.close(); st.success("Costo amministrativo registrato!"); st.rerun()
                 else:
                     st.error("Devi selezionare una categoria e inserire un importo.")
 
@@ -473,7 +478,9 @@ def page_costi():
             
             if id_unico.startswith("M-"):
                 real_id = id_unico.replace("M-", "")
+                conn = get_connection()
                 df_specifico = pd.read_sql_query(f"SELECT * FROM costo_manodopera WHERE id={real_id}", conn)
+                conn.close()
                 row = df_specifico.iloc[0]
                 
                 with st.form("modifica_manodopera_form"):
@@ -485,25 +492,27 @@ def page_costi():
                     col_btn1, col_btn2 = st.columns(2)
                     if col_btn1.form_submit_button("Salva Modifiche", type="primary"):
                         tot = m_ore * m_costo
-                        c = conn.cursor()
+                        conn = get_connection(); c = conn.cursor()
                         c.execute("UPDATE costo_manodopera SET data=?, ore=?, costo_orario=?, totale=? WHERE id=?", 
                                   (str(m_data), m_ore, m_costo, tot, real_id))
-                        conn.commit()
+                        conn.commit(); conn.close()
                         st.session_state.modifica_costo_attiva = False
                         st.session_state.costo_da_modificare = None
                         st.success("Costo aggiornato!"); st.rerun()
                         
                     if col_btn2.form_submit_button("Elimina Costo", type="secondary"):
-                        c = conn.cursor()
+                        conn = get_connection(); c = conn.cursor()
                         c.execute("DELETE FROM costo_manodopera WHERE id=?", (real_id,))
-                        conn.commit()
+                        conn.commit(); conn.close()
                         st.session_state.modifica_costo_attiva = False
                         st.session_state.costo_da_modificare = None
                         st.success("Costo eliminato!"); st.rerun()
             
             elif id_unico.startswith("Mat-"):
                 real_id = id_unico.replace("Mat-", "")
+                conn = get_connection()
                 df_specifico = pd.read_sql_query(f"SELECT * FROM costo_materiali WHERE id={real_id}", conn)
+                conn.close()
                 row = df_specifico.iloc[0]
                 
                 with st.form("modifica_materiali_form"):
@@ -518,32 +527,36 @@ def page_costi():
                     col_btn1, col_btn2 = st.columns(2)
                     if col_btn1.form_submit_button("Salva Modifiche", type="primary"):
                         tot = m_imp + (m_imp * m_iva / 100)
-                        c = conn.cursor()
+                        conn = get_connection(); c = conn.cursor()
                         c.execute("UPDATE costo_materiali SET data=?, documento=?, imponibile=?, iva=?, totale=? WHERE id=?", 
                                   (str(m_data), m_doc, m_imp, m_iva, tot, real_id))
-                        conn.commit()
+                        conn.commit(); conn.close()
                         st.session_state.modifica_costo_attiva = False
                         st.session_state.costo_da_modificare = None
                         st.success("Costo aggiornato!"); st.rerun()
                         
                     if col_btn2.form_submit_button("Elimina Costo", type="secondary"):
-                        c = conn.cursor()
+                        conn = get_connection(); c = conn.cursor()
                         c.execute("DELETE FROM costo_materiali WHERE id=?", (real_id,))
-                        conn.commit()
+                        conn.commit(); conn.close()
                         st.session_state.modifica_costo_attiva = False
                         st.session_state.costo_da_modificare = None
                         st.success("Costo eliminato!"); st.rerun()
 
             elif id_unico.startswith("Amm-"):
                 real_id = id_unico.replace("Amm-", "")
+                conn = get_connection()
                 df_specifico = pd.read_sql_query(f"SELECT * FROM costo_amministrativo WHERE id={real_id}", conn)
+                conn.close()
                 row = df_specifico.iloc[0]
                 
                 with st.form("modifica_amministrativo_form"):
                     col1, col2 = st.columns(2)
                     m_data = col1.date_input("Data", pd.to_datetime(row['data']).date(), format="DD/MM/YYYY")
                     
+                    conn = get_connection()
                     df_cat = pd.read_sql_query("SELECT nome FROM categorie_amministrative", conn)
+                    conn.close()
                     
                     if not df_cat.empty:
                         try:
@@ -558,18 +571,18 @@ def page_costi():
                     
                     col_btn1, col_btn2 = st.columns(2)
                     if col_btn1.form_submit_button("Salva Modifiche", type="primary"):
-                        c = conn.cursor()
+                        conn = get_connection(); c = conn.cursor()
                         c.execute("UPDATE costo_amministrativo SET data=?, descrizione=?, importo=? WHERE id=?", 
                                   (str(m_data), m_desc, m_imp, real_id))
-                        conn.commit()
+                        conn.commit(); conn.close()
                         st.session_state.modifica_costo_attiva = False
                         st.session_state.costo_da_modificare = None
                         st.success("Costo aggiornato!"); st.rerun()
                         
                     if col_btn2.form_submit_button("Elimina Costo", type="secondary"):
-                        c = conn.cursor()
+                        conn = get_connection(); c = conn.cursor()
                         c.execute("DELETE FROM costo_amministrativo WHERE id=?", (real_id,))
-                        conn.commit()
+                        conn.commit(); conn.close()
                         st.session_state.modifica_costo_attiva = False
                         st.session_state.costo_da_modificare = None
                         st.success("Costo eliminato!"); st.rerun()
@@ -623,7 +636,9 @@ def page_costi():
     
     query += " ORDER BY data DESC"
     
+    conn = get_connection()
     df_costi = pd.read_sql_query(query, conn)
+    conn.close()
     
     if filtro_testo and not df_costi.empty:
         mask = (
@@ -731,7 +746,7 @@ def page_incassi():
                 conn = get_connection(); c = conn.cursor()
                 c.execute("INSERT INTO incassi (data, cantiere_id, fattura, imponibile, iva, totale) VALUES (?,?,?,?,?,?)", 
                           (str(data_i), cantiere_i, fattura, imponibile, iva, totale))
-                conn.commit(); st.success("Incasso registrato!"); st.rerun()
+                conn.commit(); conn.close(); st.success("Incasso registrato!"); st.rerun()
 
     st.divider()
     conn = get_connection()
@@ -739,6 +754,7 @@ def page_incassi():
         SELECT i.id, i.data, p.indirizzo as Cantiere, i.fattura, i.imponibile, i.iva, i.totale 
         FROM incassi i JOIN preventivi p ON i.cantiere_id = p.id
     """, conn)
+    conn.close()
     
     if not df.empty:
         df['data'] = df['data'].apply(formatta_data_italiana)
@@ -751,7 +767,7 @@ def page_incassi():
         if st.button("Elimina Incasso Selezionato", type="primary", key="btn_elimina_incasso"):
             conn = get_connection(); c = conn.cursor()
             c.execute("DELETE FROM incassi WHERE id=?", (incasso_sel,))
-            conn.commit(); st.success("Incasso eliminato!"); st.rerun()
+            conn.commit(); conn.close(); st.success("Incasso eliminato!"); st.rerun()
 
 def page_avanzamento():
     st.title("📈 Avanzamento Lavori (Calcolo Automatico)")
@@ -769,6 +785,7 @@ def page_avanzamento():
         WHERE p.stato = 'Attivo'
     """
     df = pd.read_sql_query(query_avanzamento, conn)
+    conn.close()
     
     if df.empty:
         st.info("Nessun cantiere attivo presente.")
@@ -795,7 +812,6 @@ def page_avanzamento():
             perc = (row['Totale_Incassato'] / row['importo_contratto'] * 100) if row['importo_contratto'] > 0 else 0
             st.markdown(f"**{row['Cantiere']}** - {perc:.1f}%")
             st.progress(min(perc / 100, 1.0))
-
 
 def page_riepilogo():
     st.title("📊 Riepilogo e Grafici")
@@ -987,6 +1003,7 @@ def page_riepilogo():
     
     if df_cantieri.empty:
         st.info("Nessun cantiere presente.")
+        conn.close()
         return
         
     opzioni = ["--- TUTTI I CANTIERI ATTIVI ---"] + [f"{row['id']} - {row['indirizzo']}" for _, row in df_cantieri.iterrows()]
@@ -1071,6 +1088,8 @@ def page_riepilogo():
             st.pyplot(fig)
         else:
             st.info("Nessun movimento economico per questo cantiere.")
+
+    conn.close()
 
 # --- NAVIGAZIONE ---
 if not st.session_state.logged_in:
