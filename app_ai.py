@@ -17,7 +17,6 @@ DB_NAME = "gestionale_web_v2.db"
 # --- FUNZIONI DATABASE ---
 @st.cache_resource
 def get_connection():
-    # Connessione unica e persistente per tutta la sessione
     conn = sqlite3.connect(DB_NAME, check_same_thread=False)
     return conn
 
@@ -37,11 +36,8 @@ def init_db():
     c.execute("CREATE TABLE IF NOT EXISTS fornitori (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, piva TEXT, contatto TEXT)")
     c.execute("CREATE TABLE IF NOT EXISTS costo_manodopera (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, operaio TEXT, ore REAL, costo_orario REAL, totale REAL)")
     c.execute("CREATE TABLE IF NOT EXISTS costo_materiali (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, fornitore TEXT, documento TEXT, imponibile REAL, iva REAL, totale REAL)")
-    
-    # Nuove tabelle
     c.execute("CREATE TABLE IF NOT EXISTS costo_amministrativo (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, descrizione TEXT, importo REAL)")
     c.execute("CREATE TABLE IF NOT EXISTS categorie_amministrative (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT UNIQUE)")
-    
     c.execute("CREATE TABLE IF NOT EXISTS incassi (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, fattura TEXT, imponibile REAL, iva REAL, totale REAL)")
     c.execute("CREATE TABLE IF NOT EXISTS avanzamento (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, descrizione TEXT, importo REAL)")
     
@@ -53,6 +49,18 @@ def init_db():
     conn.commit()
 
 init_db()
+
+# --- FUNZIONE PER FORMATO DATA ITALIANO ---
+def formatta_data_italiana(data_str):
+    """Converte una data da YYYY-MM-DD a DD/MM/YYYY"""
+    if not data_str:
+        return ""
+    try:
+        # Assumiamo che la data sia in formato ISO (YYYY-MM-DD)
+        data_obj = datetime.datetime.strptime(str(data_str)[:10], "%Y-%m-%d")
+        return data_obj.strftime("%d/%m/%Y")
+    except:
+        return str(data_str)
 
 # --- AUTENTICAZIONE ---
 def verify_login(username, password):
@@ -158,7 +166,8 @@ def page_cantieri():
     with st.expander("➕ Aggiungi Nuovo Cantiere"):
         with st.form("nuovo_cantiere_form", clear_on_submit=True):
             col1, col2, col3 = st.columns(3)
-            data = col1.date_input("Data", datetime.date.today())
+            # Visualizzazione data in formato italiano
+            data = col1.date_input("Data", datetime.date.today(), format="DD/MM/YYYY")
             n_prev = col2.text_input("N. Preventivo")
             cliente = col3.text_input("Cliente")
             col4, col5, col6 = st.columns(3)
@@ -172,6 +181,7 @@ def page_cantieri():
             if st.form_submit_button("Salva Cantiere"):
                 if cliente and indirizzo:
                     conn = get_connection(); c = conn.cursor()
+                    # Salvataggio nel database in formato ISO (YYYY-MM-DD)
                     c.execute("INSERT INTO preventivi (data, n_prev, cliente, indirizzo, piva, descrizione, importo_prev, importo_contratto) VALUES (?,?,?,?,?,?,?,?)", 
                               (str(data), n_prev, cliente, indirizzo, piva, descrizione, importo_prev, importo_contratto))
                     conn.commit()
@@ -184,6 +194,8 @@ def page_cantieri():
     df = pd.read_sql_query("SELECT id, data, n_prev, cliente, indirizzo, descrizione, importo_prev, importo_contratto, stato FROM preventivi", conn)
     
     if not df.empty:
+        # Formattiamo la colonna data per la visualizzazione
+        df['data'] = df['data'].apply(formatta_data_italiana)
         st.dataframe(df, use_container_width=True)
         
         st.subheader("Gestisci Cantiere Selezionato")
@@ -366,7 +378,7 @@ def page_costi():
     with tab1:
         st.subheader("Registra Ore Lavorate")
         col1, col2 = st.columns(2)
-        data_m = col1.date_input("Data", datetime.date.today(), key="data_manodopera")
+        data_m = col1.date_input("Data", datetime.date.today(), format="DD/MM/YYYY", key="data_manodopera")
         cantiere_m = col2.selectbox("Cantiere", cantieri['id'].tolist(), format_func=lambda x: cantieri[cantieri['id']==x]['indirizzo'].values[0], key="cant_manodopera")
         
         if not operai.empty:
@@ -390,7 +402,7 @@ def page_costi():
         with st.form("form_materiali", clear_on_submit=True):
             st.subheader("Registra Acquisto Materiale")
             col1, col2 = st.columns(2)
-            data_mat = col1.date_input("Data", datetime.date.today(), key="data_materiale")
+            data_mat = col1.date_input("Data", datetime.date.today(), format="DD/MM/YYYY", key="data_materiale")
             cantiere_mat = col2.selectbox("Cantiere", cantieri['id'].tolist(), format_func=lambda x: cantieri[cantieri['id']==x]['indirizzo'].values[0], key="cant_materiale")
             
             if not fornitori.empty:
@@ -427,7 +439,7 @@ def page_costi():
         
         with st.form("form_amministrativo", clear_on_submit=True):
             col1, col2 = st.columns(2)
-            data_amm = col1.date_input("Data", datetime.date.today(), key="data_amm")
+            data_amm = col1.date_input("Data", datetime.date.today(), format="DD/MM/YYYY", key="data_amm")
             
             if not df_cat.empty:
                 desc_amm = col2.selectbox("Categoria Spesa", df_cat['nome'].tolist(), key="desc_amm")
@@ -448,7 +460,6 @@ def page_costi():
 
     st.divider()
 
-    # --- SEZIONE DI MODIFICA (VISIBILE SOLO SE ATTIVATA) ---
     if st.session_state.modifica_costo_attiva and st.session_state.costo_da_modificare:
         id_unico = st.session_state.costo_da_modificare
         
@@ -462,7 +473,7 @@ def page_costi():
                 
                 with st.form("modifica_manodopera_form"):
                     col1, col2 = st.columns(2)
-                    m_data = col1.date_input("Data", pd.to_datetime(row['data']).date())
+                    m_data = col1.date_input("Data", pd.to_datetime(row['data']).date(), format="DD/MM/YYYY")
                     m_ore = col2.number_input("Ore Lavorate", value=float(row['ore']), step=0.5)
                     m_costo = st.number_input("Costo Orario (€)", value=float(row['costo_orario']), step=1.0)
                     
@@ -492,7 +503,7 @@ def page_costi():
                 
                 with st.form("modifica_materiali_form"):
                     col1, col2 = st.columns(2)
-                    m_data = col1.date_input("Data", pd.to_datetime(row['data']).date())
+                    m_data = col1.date_input("Data", pd.to_datetime(row['data']).date(), format="DD/MM/YYYY")
                     m_doc = col2.text_input("N. Documento", value=row['documento'])
                     
                     col3, col4 = st.columns(2)
@@ -525,7 +536,7 @@ def page_costi():
                 
                 with st.form("modifica_amministrativo_form"):
                     col1, col2 = st.columns(2)
-                    m_data = col1.date_input("Data", pd.to_datetime(row['data']).date())
+                    m_data = col1.date_input("Data", pd.to_datetime(row['data']).date(), format="DD/MM/YYYY")
                     
                     df_cat = pd.read_sql_query("SELECT nome FROM categorie_amministrative", conn)
                     
@@ -565,15 +576,14 @@ def page_costi():
             
         st.divider()
 
-    # --- ELENCO COSTI CON FILTRI (SPOSTATO QUI, SOTTO LA MODIFICA) ---
     st.subheader("📋 Elenco Costi Registrati")
     
     with st.expander("🔍 Filtra i costi", expanded=True):
         col_f1, col_f2, col_f3, col_f4 = st.columns(4)
         filtro_testo = col_f1.text_input("Cerca (Operaio/Fornitore/Cantiere)", placeholder="Scrivi qui...")
         filtro_tipo = col_f2.selectbox("Tipo di costo", ["Tutti", "Personale", "Materiale", "Amministrativo"])
-        data_inizio = col_f3.date_input("Dal", value=datetime.date(2000, 1, 1))
-        data_fine = col_f4.date_input("Al", value=datetime.date.today())
+        data_inizio = col_f3.date_input("Dal", value=datetime.date(2000, 1, 1), format="DD/MM/YYYY")
+        data_fine = col_f4.date_input("Al", value=datetime.date.today(), format="DD/MM/YYYY")
     
     query_pers = f"""
         SELECT 'M-' || id as ID_Unico, 'Personale' as Tipo, data, 
@@ -625,7 +635,9 @@ def page_costi():
         for index, row in df_costi.iterrows():
             col_dati, col_btn = st.columns([8, 2])
             with col_dati:
-                st.markdown(f"**{row['Tipo']}** | {row['Data']} | {row['Cantiere']} | {row['Descrizione']} | **€ {row['Totale']:,.2f}**")
+                # Formattiamo la data
+                data_it = formatta_data_italiana(row['Data'])
+                st.markdown(f"**{row['Tipo']}** | {data_it} | {row['Cantiere']} | {row['Descrizione']} | **€ {row['Totale']:,.2f}**")
             with col_btn:
                 if st.button("✏️ Modifica", key=f"mod_{row['Id_unico']}"):
                     st.session_state.modifica_costo_attiva = True
@@ -649,7 +661,11 @@ def page_costi():
                 elements = []
                 styles = getSampleStyleSheet()
                 
-                elements.append(Paragraph(f"Riepilogo Costi dal {data_inizio} al {data_fine}", styles['Title']))
+                # Formattiamo le date per il PDF
+                data_inizio_it = formatta_data_italiana(data_inizio)
+                data_fine_it = formatta_data_italiana(data_fine)
+                
+                elements.append(Paragraph(f"Riepilogo Costi dal {data_inizio_it} al {data_fine_it}", styles['Title']))
                 if filtro_testo:
                     elements.append(Paragraph(f"Filtro di ricerca: '{filtro_testo}'", styles['Normal']))
                 if filtro_tipo != "Tutti":
@@ -659,7 +675,7 @@ def page_costi():
                 data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Totale (€)"]]
                 for _, row in df_costi.iterrows():
                     data_rows.append([
-                        row['Tipo'], row['Data'], row['Cantiere'], row['Descrizione'], f"{row['Totale']:,.2f}"
+                        row['Tipo'], formatta_data_italiana(row['Data']), row['Cantiere'], row['Descrizione'], f"{row['Totale']:,.2f}"
                     ])
                 data_rows.append(["", "", "", "TOTALE GENERALE", f"€ {totale_filtrato:,.2f}"])
                 
@@ -699,7 +715,7 @@ def page_incassi():
     with st.expander("➕ Registra Nuovo Incasso"):
         with st.form("nuovo_incasso", clear_on_submit=True):
             col1, col2 = st.columns(2)
-            data_i = col1.date_input("Data Fattura", datetime.date.today(), key="data_incasso")
+            data_i = col1.date_input("Data Fattura", datetime.date.today(), format="DD/MM/YYYY", key="data_incasso")
             cantiere_i = col2.selectbox("Cantiere", cantieri['id'].tolist(), format_func=lambda x: cantieri[cantieri['id']==x]['indirizzo'].values[0], key="cant_incasso")
             
             col3, col4, col5 = st.columns(3)
@@ -720,6 +736,11 @@ def page_incassi():
         SELECT i.id, i.data, p.indirizzo as Cantiere, i.fattura, i.imponibile, i.iva, i.totale 
         FROM incassi i JOIN preventivi p ON i.cantiere_id = p.id
     """, conn)
+    
+    if not df.empty:
+        # Formattiamo la data
+        df['data'] = df['data'].apply(formatta_data_italiana)
+    
     st.dataframe(df, use_container_width=True)
 
     if not df.empty:
@@ -740,7 +761,7 @@ def page_avanzamento():
     with st.expander("➕ Registra Nuovo SAL"):
         with st.form("nuovo_sal", clear_on_submit=True):
             col1, col2 = st.columns(2)
-            data_s = col1.date_input("Data SAL", datetime.date.today(), key="data_sal")
+            data_s = col1.date_input("Data SAL", datetime.date.today(), format="DD/MM/YYYY", key="data_sal")
             cantiere_s = col2.selectbox("Cantiere", cantieri['id'].tolist(), format_func=lambda x: cantieri[cantieri['id']==x]['indirizzo'].values[0], key="cant_sal")
             
             descrizione = st.text_input("Descrizione Lavori", key="desc_sal")
@@ -758,6 +779,11 @@ def page_avanzamento():
         SELECT a.id, a.data, p.indirizzo as Cantiere, a.descrizione, a.importo 
         FROM avanzamento a JOIN preventivi p ON a.cantiere_id = p.id
     """, conn)
+    
+    if not df.empty:
+        # Formattiamo la data
+        df['data'] = df['data'].apply(formatta_data_italiana)
+    
     st.dataframe(df, use_container_width=True)
 
 def page_riepilogo():
@@ -765,7 +791,6 @@ def page_riepilogo():
     
     conn = get_connection()
     
-    # --- TOTALI AZIENDALI ---
     query_totali = """
         SELECT 
             (SELECT SUM(importo_contratto) FROM preventivi WHERE stato = 'Attivo') as tot_contratti,
@@ -794,12 +819,10 @@ def page_riepilogo():
     st.subheader("📋 Report Costi per Cantiere")
     st.write("Riepilogo delle spese di Personale, Materiali e Amministrative suddivise per periodo e cantiere.")
 
-    # --- FILTRO PERIODO ---
     col_date1, col_date2 = st.columns(2)
-    data_inizio_report = col_date1.date_input("Dal", value=datetime.date.today().replace(day=1), key="data_inizio_report")
-    data_fine_report = col_date2.date_input("Al", value=datetime.date.today(), key="data_fine_report")
+    data_inizio_report = col_date1.date_input("Dal", value=datetime.date.today().replace(day=1), format="DD/MM/YYYY", key="data_inizio_report")
+    data_fine_report = col_date2.date_input("Al", value=datetime.date.today(), format="DD/MM/YYYY", key="data_fine_report")
 
-    # Query che prende SOLO i cantieri e i loro costi specifici, filtrati per data
     query_report = f"""
         SELECT 
             p.indirizzo as Cantiere,
@@ -833,7 +856,6 @@ def page_riepilogo():
         
         st.dataframe(df_report_visual, use_container_width=True)
 
-    # --- SEZIONE SPESE AMMINISTRATIVE (Dettaglio per Descrizione) ---
     st.markdown("#### 🏢 Spese Generali (Amministrative)")
     
     query_amm_dettaglio = f"""
@@ -860,12 +882,10 @@ def page_riepilogo():
         
         st.info("Queste spese non sono legate a un cantiere specifico e vengono conteggiate nel totale aziendale.")
 
-    # --- TOTALE GENERALE ASSOLUTO ---
     st.markdown("---")
     totale_assoluto = tot_generale_cantieri + tot_amministrativo
     st.markdown(f"### 💰 Totale Generale Assoluto (Cantieri + Amministrative): **€ {totale_assoluto:,.2f}**")
 
-    # --- PULSANTE PER PDF ---
     if st.button("📄 Esporta Report Costi in PDF", type="primary", key="btn_export_report_costi"):
         try:
             from reportlab.lib.pagesizes import A4, landscape
@@ -874,15 +894,17 @@ def page_riepilogo():
             from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
             from reportlab.lib.styles import getSampleStyleSheet
             
-            filename = f"Report_Costi_{data_inizio_report}_al_{data_fine_report}.pdf"
+            data_inizio_it = formatta_data_italiana(data_inizio_report)
+            data_fine_it = formatta_data_italiana(data_fine_report)
+            
+            filename = f"Report_Costi_{data_inizio_it.replace('/', '-')}_al_{data_fine_it.replace('/', '-')}.pdf"
             doc = SimpleDocTemplate(filename, pagesize=landscape(A4))
             elements = []
             styles = getSampleStyleSheet()
             
-            elements.append(Paragraph(f"Report Costi dal {data_inizio_report} al {data_fine_report}", styles['Title']))
+            elements.append(Paragraph(f"Report Costi dal {data_inizio_it} al {data_fine_it}", styles['Title']))
             elements.append(Spacer(1, 12))
             
-            # 1. Tabella Cantieri
             data_rows = [["Cantiere", "Costo Personale", "Costo Materiale", "Totale Cantiere"]]
             for index, row in df_report.iterrows():
                 data_rows.append([
@@ -907,7 +929,6 @@ def page_riepilogo():
             elements.append(t)
             elements.append(Spacer(1, 20))
             
-            # 2. Tabella Spese Amministrative
             elements.append(Paragraph("Spese Generali (Amministrative)", styles['Heading2']))
             elements.append(Spacer(1, 5))
             
@@ -934,7 +955,6 @@ def page_riepilogo():
             
             elements.append(Spacer(1, 20))
             
-            # 3. Totale Assoluto
             elements.append(Paragraph(f"<b>Totale Generale Assoluto: € {totale_assoluto:,.2f}</b>", styles['Heading2']))
             
             doc.build(elements)
@@ -1036,7 +1056,7 @@ def page_riepilogo():
             ax.plot(all_movs['data'], all_movs['Costi Cum'], label='Costi', color='red', marker='x', linewidth=2)
             ax.set_title(f"Andamento Economico: {scelta.split(' - ')[1]}")
             ax.legend(); ax.grid(True, linestyle='--', alpha=0.6)
-            plt.xticks(range(len(all_movs)), all_movs['data'].dt.strftime('%Y-%m-%d'), rotation=45, ha='right')
+            plt.xticks(range(len(all_movs)), all_movs['data'].dt.strftime('%d/%m/%Y'), rotation=45, ha='right')
             plt.tight_layout()
             st.pyplot(fig)
         else:
@@ -1066,7 +1086,6 @@ else:
         
         st.divider()
         
-        # --- BACKUP DATABASE ---
         st.markdown("##### 💾 Sicurezza Dati")
         try:
             with open(DB_NAME, "rb") as f:
