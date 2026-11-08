@@ -796,7 +796,6 @@ def page_avanzamento():
             st.markdown(f"**{row['Cantiere']}** - {perc:.1f}%")
             st.progress(min(perc / 100, 1.0))
 
-    conn.close()
 
 def page_riepilogo():
     st.title("📊 Riepilogo e Grafici")
