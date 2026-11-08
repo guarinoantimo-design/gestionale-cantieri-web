@@ -756,7 +756,6 @@ def page_riepilogo():
     st.subheader("📋 Report Costi per Cantiere")
     st.write("Riepilogo di tutte le spese suddivise per cantiere e categoria.")
 
-    # Query che raggruppa i costi per cantiere
     query_report = """
         SELECT 
             p.indirizzo as Cantiere,
@@ -775,30 +774,24 @@ def page_riepilogo():
         HAVING Costo_Amministrativo > 0
     """
     df_report = pd.read_sql_query(query_report, conn)
-    conn.close()
 
     if df_report.empty:
         st.info("Nessun costo registrato.")
     else:
-        # Aggiungiamo le colonne calcolate e i totali
         df_report['Totale Cantiere'] = df_report['Costo_Personale'] + df_report['Costo_Materiale'] + df_report['Costo_Amministrativo']
         
-        # Calcoliamo i totali generali
         totale_personale = df_report['Costo_Personale'].sum()
         totale_materiale = df_report['Costo_Materiale'].sum()
         totale_amministrativo = df_report['Costo_Amministrativo'].sum()
         totale_generale = df_report['Totale Cantiere'].sum()
         
-        # Aggiungiamo riga totale
         df_report.loc['Totale'] = ['TOTALE GENERALE', totale_personale, totale_materiale, totale_amministrativo, totale_generale]
         
-        # Formattiamo i numeri
         df_report['Costo_Personale'] = df_report['Costo_Personale'].apply(lambda x: f"€ {x:,.2f}")
         df_report['Costo_Materiale'] = df_report['Costo_Materiale'].apply(lambda x: f"€ {x:,.2f}")
         df_report['Costo_Amministrativo'] = df_report['Costo_Amministrativo'].apply(lambda x: f"€ {x:,.2f}")
         df_report['Totale Cantiere'] = df_report['Totale Cantiere'].apply(lambda x: f"€ {x:,.2f}")
         
-        # Rinominiamo le colonne per la visualizzazione
         df_report = df_report.rename(columns={
             'Costo_Personale': 'Costo Personale',
             'Costo_Materiale': 'Costo Materiale',
@@ -824,14 +817,9 @@ def page_riepilogo():
                 elements.append(Paragraph("Report Costi per Cantiere", styles['Title']))
                 elements.append(Spacer(1, 12))
                 
-                # Costruiamo la tabella per il PDF
                 data_rows = [["Cantiere", "Costo Personale", "Costo Materiale", "Costo Amministrativo", "Totale Cantiere"]]
                 for index, row in df_report.iterrows():
-                    # Se è la riga del totale, saltiamo i simboli € per allineamento
-                    if index == 'Totale':
-                        data_rows.append([row['Cantiere'], row['Costo Personale'], row['Costo Materiale'], row['Costo Amministrativo'], row['Totale Cantiere']])
-                    else:
-                        data_rows.append([row['Cantiere'], row['Costo Personale'], row['Costo Materiale'], row['Costo Amministrativo'], row['Totale Cantiere']])
+                    data_rows.append([row['Cantiere'], row['Costo Personale'], row['Costo Materiale'], row['Costo Amministrativo'], row['Totale Cantiere']])
                 
                 t = Table(data_rows, colWidths=[200, 100, 100, 120, 120])
                 t.setStyle(TableStyle([
@@ -860,6 +848,99 @@ def page_riepilogo():
                 st.error(f"Errore durante la generazione del PDF: {e}")
 
     st.divider()
+
+    # --- GRAFICI ESISTENTI (Ora funzionano perché la connessione è ancora aperta) ---
+    st.subheader("📈 Andamento Economico")
+    df_cantieri = pd.read_sql_query("SELECT id, indirizzo FROM preventivi", conn)
+    
+    if df_cantieri.empty:
+        st.info("Nessun cantiere presente.")
+        conn.close()
+        return
+        
+    opzioni = ["--- TUTTI I CANTIERI ATTIVI ---"] + [f"{row['id']} - {row['indirizzo']}" for _, row in df_cantieri.iterrows()]
+    scelta = st.selectbox("Seleziona Cantiere per il grafico:", opzioni, key="sel_riepilogo")
+    
+    if scelta == "--- TUTTI I CANTIERI ATTIVI ---":
+        query_incassi = "SELECT i.data, i.totale FROM incassi i JOIN preventivi p ON i.cantiere_id = p.id WHERE p.stato = 'Attivo'"
+        query_costi_m = "SELECT c.data, c.totale FROM costo_manodopera c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo'"
+        query_costi_mat = "SELECT c.data, c.totale FROM costo_materiali c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo'"
+        
+        df_inc = pd.read_sql_query(query_incassi, conn)
+        df_man = pd.read_sql_query(query_costi_m, conn)
+        df_mat = pd.read_sql_query(query_costi_mat, conn)
+        
+        if df_inc.empty and df_man.empty and df_mat.empty:
+            st.info("Nessun dato economico disponibile per i cantieri attivi.")
+        else:
+            df_inc['Tipo'] = 'Incasso'; df_man['Tipo'] = 'Costo Pers'; df_mat['Tipo'] = 'Costo Mat'
+            all_movs = pd.concat([df_inc, df_man, df_mat]).sort_values('data')
+            
+            if not all_movs.empty:
+                all_movs['data'] = pd.to_datetime(all_movs['data'])
+                all_movs['Incassi Cum'] = all_movs.apply(lambda x: x['totale'] if x['Tipo'] == 'Incasso' else 0, axis=1).cumsum()
+                all_movs['Costi Cum'] = all_movs.apply(lambda x: x['totale'] if 'Costo' in x['Tipo'] else 0, axis=1).cumsum()
+
+                fig, ax = plt.subplots(figsize=(10, 4))
+                ax.plot(all_movs['data'], all_movs['Incassi Cum'], label='Incassi', color='green', marker='o', linewidth=2)
+                ax.plot(all_movs['data'], all_movs['Costi Cum'], label='Costi', color='red', marker='x', linewidth=2)
+                ax.set_title("Andamento Economico Globale (Cantieri Attivi)")
+                ax.legend(); ax.grid(True, linestyle='--', alpha=0.6)
+                plt.xticks(rotation=45); plt.tight_layout()
+                st.pyplot(fig)
+            else:
+                st.info("Nessun dato disponibile.")
+    else:
+        cid = int(scelta.split(" - ")[0])
+        
+        query_dati = f"""
+            SELECT 
+                p.importo_contratto,
+                (SELECT SUM(totale) FROM incassi WHERE cantiere_id = {cid}) as incassi,
+                (SELECT SUM(totale) FROM costo_manodopera WHERE cantiere_id = {cid}) as costi_man,
+                (SELECT SUM(totale) FROM costo_materiali WHERE cantiere_id = {cid}) as costi_mat,
+                (SELECT SUM(importo) FROM avanzamento WHERE cantiere_id = {cid}) as avanzamento
+            FROM preventivi p WHERE p.id = {cid}
+        """
+        dati = pd.read_sql_query(query_dati, conn).iloc[0]
+        
+        importo_contratto = dati['importo_contratto'] or 0
+        incassi_c = dati['incassi'] or 0
+        costi_c = (dati['costi_man'] or 0) + (dati['costi_mat'] or 0)
+        avanz = dati['avanzamento'] or 0
+        perc_avanz = (avanz / importo_contratto * 100) if importo_contratto > 0 else 0
+        
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Contratto", f"€ {importo_contratto:,.2f}")
+        col2.metric("Incassato", f"€ {incassi_c:,.2f}")
+        col3.metric("Costi", f"€ {costi_c:,.2f}", delta_color="inverse")
+        col4.metric("Avanzamento", f"{perc_avanz:.1f}%")
+        
+        st.progress(min(perc_avanz / 100, 1.0))
+        
+        query_incassi = f"SELECT data, totale, 'Incasso' as Tipo FROM incassi WHERE cantiere_id = {cid}"
+        query_costi_m = f"SELECT data, totale, 'Costo Pers' as Tipo FROM costo_manodopera WHERE cantiere_id = {cid}"
+        query_costi_mat = f"SELECT data, totale, 'Costo Mat' as Tipo FROM costo_materiali WHERE cantiere_id = {cid}"
+        
+        all_movs = pd.read_sql_query(f"{query_incassi} UNION ALL {query_costi_m} UNION ALL {query_costi_mat} ORDER BY data", conn)
+        
+        if not all_movs.empty:
+            all_movs['data'] = pd.to_datetime(all_movs['data'])
+            all_movs['Incassi Cum'] = all_movs.apply(lambda x: x['totale'] if x['Tipo'] == 'Incasso' else 0, axis=1).cumsum()
+            all_movs['Costi Cum'] = all_movs.apply(lambda x: x['totale'] if 'Costo' in x['Tipo'] else 0, axis=1).cumsum()
+
+            fig, ax = plt.subplots(figsize=(10, 4))
+            ax.plot(all_movs['data'], all_movs['Incassi Cum'], label='Incassi', color='green', marker='o', linewidth=2)
+            ax.plot(all_movs['data'], all_movs['Costi Cum'], label='Costi', color='red', marker='x', linewidth=2)
+            ax.set_title(f"Andamento Economico: {scelta.split(' - ')[1]}")
+            ax.legend(); ax.grid(True, linestyle='--', alpha=0.6)
+            plt.xticks(rotation=45); plt.tight_layout()
+            st.pyplot(fig)
+        else:
+            st.info("Nessun movimento economico per questo cantiere.")
+
+    # Chiudiamo la connessione solo alla fine di tutto
+    conn.close()
 
     # --- GRAFICI ESISTENTI ---
     st.subheader("📈 Andamento Economico")
