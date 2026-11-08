@@ -428,14 +428,26 @@ def page_costi():
                 else:
                     st.error("Devi prima selezionare un fornitore.")
 
+    # --- SCHEDA COSTO AMMINISTRATIVO (CORRETTA) ---
     with tab3:
+        st.subheader("Registra Costo Amministrativo")
+        st.write("Spese generali non legate a un cantiere specifico.")
+        
+        # Recuperiamo le categorie dal database
+        conn = get_connection()
+        df_cat = pd.read_sql_query("SELECT nome FROM categorie_amministrative", conn)
+        conn.close()
+        
         with st.form("form_amministrativo", clear_on_submit=True):
-            st.subheader("Registra Costo Amministrativo")
-            st.write("Spese generali non legate a un cantiere specifico (es. commercialista, software, cancelleria).")
-            
             col1, col2 = st.columns(2)
             data_amm = col1.date_input("Data", datetime.date.today(), key="data_amm")
-            desc_amm = col2.text_input("Descrizione Spesa", key="desc_amm")
+            
+            if not df_cat.empty:
+                # Menu a tendina per scegliere la categoria
+                desc_amm = col2.selectbox("Categoria Spesa", df_cat['nome'].tolist(), key="desc_amm")
+            else:
+                st.warning("Nessuna categoria disponibile. Aggiungine una nella sezione 'Anagrafiche'.")
+                desc_amm = None
             
             importo_amm = st.number_input("Importo (€)", min_value=0.0, step=10.0, key="importo_amm")
             
@@ -446,7 +458,7 @@ def page_costi():
                               (str(data_amm), desc_amm, importo_amm))
                     conn.commit(); st.success("Costo amministrativo registrato!"); st.rerun()
                 else:
-                    st.error("Descrizione e Importo sono obbligatori.")
+                    st.error("Devi selezionare una categoria e inserire un importo.")
 
     st.divider()
 
@@ -461,7 +473,7 @@ def page_costi():
                 real_id = id_unico.replace("M-", "")
                 conn = get_connection()
                 df_specifico = pd.read_sql_query(f"SELECT * FROM costo_manodopera WHERE id={real_id}", conn)
-                
+                conn.close()
                 row = df_specifico.iloc[0]
                 
                 with st.form("modifica_manodopera_form"):
@@ -476,7 +488,7 @@ def page_costi():
                         conn = get_connection(); c = conn.cursor()
                         c.execute("UPDATE costo_manodopera SET data=?, ore=?, costo_orario=?, totale=? WHERE id=?", 
                                   (str(m_data), m_ore, m_costo, tot, real_id))
-                        conn.commit();
+                        conn.commit()
                         st.session_state.modifica_costo_attiva = False
                         st.session_state.costo_da_modificare = None
                         st.success("Costo aggiornato!"); st.rerun()
@@ -484,7 +496,7 @@ def page_costi():
                     if col_btn2.form_submit_button("Elimina Costo", type="secondary"):
                         conn = get_connection(); c = conn.cursor()
                         c.execute("DELETE FROM costo_manodopera WHERE id=?", (real_id,))
-                        conn.commit();
+                        conn.commit()
                         st.session_state.modifica_costo_attiva = False
                         st.session_state.costo_da_modificare = None
                         st.success("Costo eliminato!"); st.rerun()
@@ -493,7 +505,7 @@ def page_costi():
                 real_id = id_unico.replace("Mat-", "")
                 conn = get_connection()
                 df_specifico = pd.read_sql_query(f"SELECT * FROM costo_materiali WHERE id={real_id}", conn)
-                
+                conn.close()
                 row = df_specifico.iloc[0]
                 
                 with st.form("modifica_materiali_form"):
@@ -511,7 +523,7 @@ def page_costi():
                         conn = get_connection(); c = conn.cursor()
                         c.execute("UPDATE costo_materiali SET data=?, documento=?, imponibile=?, iva=?, totale=? WHERE id=?", 
                                   (str(m_data), m_doc, m_imp, m_iva, tot, real_id))
-                        conn.commit();
+                        conn.commit()
                         st.session_state.modifica_costo_attiva = False
                         st.session_state.costo_da_modificare = None
                         st.success("Costo aggiornato!"); st.rerun()
@@ -519,7 +531,7 @@ def page_costi():
                     if col_btn2.form_submit_button("Elimina Costo", type="secondary"):
                         conn = get_connection(); c = conn.cursor()
                         c.execute("DELETE FROM costo_materiali WHERE id=?", (real_id,))
-                        conn.commit();
+                        conn.commit()
                         st.session_state.modifica_costo_attiva = False
                         st.session_state.costo_da_modificare = None
                         st.success("Costo eliminato!"); st.rerun()
@@ -528,13 +540,28 @@ def page_costi():
                 real_id = id_unico.replace("Amm-", "")
                 conn = get_connection()
                 df_specifico = pd.read_sql_query(f"SELECT * FROM costo_amministrativo WHERE id={real_id}", conn)
-                
+                conn.close()
                 row = df_specifico.iloc[0]
                 
                 with st.form("modifica_amministrativo_form"):
                     col1, col2 = st.columns(2)
                     m_data = col1.date_input("Data", pd.to_datetime(row['data']).date())
-                    m_desc = col2.text_input("Descrizione", value=row['descrizione'])
+                    
+                    # Recuperiamo le categorie per il menu a tendina
+                    conn = get_connection()
+                    df_cat = pd.read_sql_query("SELECT nome FROM categorie_amministrative", conn)
+                    conn.close()
+                    
+                    if not df_cat.empty:
+                        # Troviamo l'indice della categoria attuale
+                        try:
+                            idx_cat = df_cat['nome'].tolist().index(row['descrizione'])
+                        except ValueError:
+                            idx_cat = 0
+                        m_desc = col2.selectbox("Categoria", df_cat['nome'].tolist(), index=idx_cat)
+                    else:
+                        m_desc = col2.text_input("Descrizione", value=row['descrizione'])
+                    
                     m_imp = st.number_input("Importo (€)", value=float(row['importo']), step=10.0)
                     
                     col_btn1, col_btn2 = st.columns(2)
@@ -542,7 +569,7 @@ def page_costi():
                         conn = get_connection(); c = conn.cursor()
                         c.execute("UPDATE costo_amministrativo SET data=?, descrizione=?, importo=? WHERE id=?", 
                                   (str(m_data), m_desc, m_imp, real_id))
-                        conn.commit();
+                        conn.commit()
                         st.session_state.modifica_costo_attiva = False
                         st.session_state.costo_da_modificare = None
                         st.success("Costo aggiornato!"); st.rerun()
@@ -550,7 +577,7 @@ def page_costi():
                     if col_btn2.form_submit_button("Elimina Costo", type="secondary"):
                         conn = get_connection(); c = conn.cursor()
                         c.execute("DELETE FROM costo_amministrativo WHERE id=?", (real_id,))
-                        conn.commit();
+                        conn.commit()
                         st.session_state.modifica_costo_attiva = False
                         st.session_state.costo_da_modificare = None
                         st.success("Costo eliminato!"); st.rerun()
@@ -607,7 +634,7 @@ def page_costi():
     query += " ORDER BY data DESC"
     
     df_costi = pd.read_sql_query(query, conn)
-    
+    conn.close()
     
     if filtro_testo and not df_costi.empty:
         mask = (
@@ -687,8 +714,6 @@ def page_costi():
                     )
             except Exception as e:
                 st.error(f"Errore durante la generazione del PDF: {e}")
-
-def page_incassi():
     st.title("💰 Gestione Incassi")
     cantieri = get_cantieri()
     if cantieri.empty:
