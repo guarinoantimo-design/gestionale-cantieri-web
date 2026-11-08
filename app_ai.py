@@ -762,39 +762,53 @@ def page_incassi():
             conn.commit(); st.success("Incasso eliminato!"); st.rerun()
 
 def page_avanzamento():
-    st.title("📈 Avanzamento Lavori (SAL)")
-    cantieri = get_cantieri()
-    if cantieri.empty:
-        st.warning("Devi prima creare un cantiere!")
-        return
-
-    with st.expander("➕ Registra Nuovo SAL"):
-        with st.form("nuovo_sal", clear_on_submit=True):
-            col1, col2 = st.columns(2)
-            data_s = col1.date_input("Data SAL", datetime.date.today(), format="DD/MM/YYYY", key="data_sal")
-            cantiere_s = col2.selectbox("Cantiere", cantieri['id'].tolist(), format_func=lambda x: cantieri[cantieri['id']==x]['indirizzo'].values[0], key="cant_sal")
-            
-            descrizione = st.text_input("Descrizione Lavori", key="desc_sal")
-            importo = st.number_input("Importo Realizzato (€)", min_value=0.0, step=100.0, key="imp_sal")
-            
-            if st.form_submit_button("Salva SAL"):
-                conn = get_connection(); c = conn.cursor()
-                c.execute("INSERT INTO avanzamento (data, cantiere_id, descrizione, importo) VALUES (?,?,?,?)", 
-                          (str(data_s), cantiere_s, descrizione, importo))
-                conn.commit(); st.success("SAL registrato!"); st.rerun()
-
-    st.divider()
+    st.title("📈 Avanzamento Lavori (Calcolo Automatico)")
+    st.write("L'avanzamento lavori è calcolato automaticamente in base agli incassi registrati rispetto all'importo contrattuale.")
+    
     conn = get_connection()
-    df = pd.read_sql_query("""
-        SELECT a.id, a.data, p.indirizzo as Cantiere, a.descrizione, a.importo 
-        FROM avanzamento a JOIN preventivi p ON a.cantiere_id = p.id
-    """, conn)
     
-    if not df.empty:
-        # Formattiamo la data
-        df['data'] = df['data'].apply(formatta_data_italiana)
+    # Query che calcola la percentuale per ogni cantiere attivo
+    query_avanzamento = """
+        SELECT 
+            p.id,
+            p.indirizzo as Cantiere,
+            p.importo_contratto,
+            COALESCE((SELECT SUM(totale) FROM incassi WHERE cantiere_id = p.id), 0) as Totale_Incassato
+        FROM preventivi p
+        WHERE p.stato = 'Attivo'
+    """
+    df = pd.read_sql_query(query_avanzamento, conn)
     
-    st.dataframe(df, use_container_width=True)
+    if df.empty:
+        st.info("Nessun cantiere attivo presente.")
+    else:
+        # Calcoliamo la percentuale
+        df['Percentuale'] = df.apply(lambda row: (row['Totale_Incassato'] / row['importo_contratto'] * 100) if row['importo_contratto'] > 0 else 0, axis=1)
+        
+        # Formattiamo per la visualizzazione
+        df_visual = df.copy()
+        df_visual['importo_contratto'] = df_visual['importo_contratto'].apply(lambda x: f"€ {x:,.2f}")
+        df_visual['Totale_Incassato'] = df_visual['Totale_Incassato'].apply(lambda x: f"€ {x:,.2f}")
+        df_visual['Percentuale'] = df_visual['Percentuale'].apply(lambda x: f"{x:.1f}%")
+        
+        df_visual = df_visual.rename(columns={
+            'Cantiere': 'Cantiere', 
+            'importo_contratto': 'Importo Contratto', 
+            'Totale_Incassato': 'Totale Incassato'
+        })
+        
+        st.dataframe(df_visual[['Cantiere', 'Importo Contratto', 'Totale Incassato', 'Percentuale']], use_container_width=True)
+        
+        # Mostriamo anche una barra di avanzamento visiva per ogni cantiere
+        st.divider()
+        st.subheader("Dettaglio Visivo")
+        
+        for index, row in df.iterrows():
+            perc = (row['Totale_Incassato'] / row['importo_contratto'] * 100) if row['importo_contratto'] > 0 else 0
+            st.markdown(f"**{row['Cantiere']}** - {perc:.1f}%")
+            st.progress(min(perc / 100, 1.0))
+
+    conn.close()
 
 def page_riepilogo():
     st.title("📊 Riepilogo e Grafici")
@@ -1039,9 +1053,8 @@ def page_riepilogo():
         importo_contratto = dati['importo_contratto'] or 0
         incassi_c = dati['incassi'] or 0
         costi_c = (dati['costi_man'] or 0) + (dati['costi_mat'] or 0)
-        avanz = dati['avanzamento'] or 0
-        perc_avanz = (avanz / importo_contratto * 100) if importo_contratto > 0 else 0
-        
+                # Calcolo automatico basato sugli incassi
+        perc_avanz = (incassi_c / importo_contratto * 100) if importo_contratto > 0 else 0
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Contratto", f"€ {importo_contratto:,.2f}")
         col2.metric("Incassato", f"€ {incassi_c:,.2f}")
