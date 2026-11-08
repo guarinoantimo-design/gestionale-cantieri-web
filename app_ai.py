@@ -849,7 +849,7 @@ def page_riepilogo():
 
     st.divider()
 
-    # --- GRAFICI ESISTENTI (Ora funzionano perché la connessione è ancora aperta) ---
+    # --- GRAFICI ESISTENTI ---
     st.subheader("📈 Andamento Economico")
     df_cantieri = pd.read_sql_query("SELECT id, indirizzo FROM preventivi", conn)
     
