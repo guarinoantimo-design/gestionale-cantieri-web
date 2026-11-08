@@ -37,6 +37,7 @@ def init_db():
     c.execute("CREATE TABLE IF NOT EXISTS costo_materiali (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, fornitore TEXT, documento TEXT, imponibile REAL, iva REAL, totale REAL)")
     # NUOVA TABELLA: COSTI AMMINISTRATIVI
     c.execute("CREATE TABLE IF NOT EXISTS costo_amministrativo (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, descrizione TEXT, importo REAL)")
+    c.execute("CREATE TABLE IF NOT EXISTS categorie_amministrative (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT UNIQUE)")
     c.execute("CREATE TABLE IF NOT EXISTS incassi (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, fattura TEXT, imponibile REAL, iva REAL, totale REAL)")
     c.execute("CREATE TABLE IF NOT EXISTS avanzamento (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, descrizione TEXT, importo REAL)")
     
@@ -237,8 +238,8 @@ def page_cantieri():
         st.info("Nessun cantiere presente.")
 
 def page_anagrafiche():
-    st.title("👥 Anagrafiche Operai e Fornitori")
-    tab1, tab2 = st.tabs(["Operai", "Fornitori"])
+    st.title("👥 Anagrafiche Operai, Fornitori e Categorie Spese")
+    tab1, tab2, tab3 = st.tabs(["Operai", "Fornitori", "Categorie Amministrative"])
     
     with tab1:
         with st.expander("➕ Nuovo Operaio"):
@@ -254,7 +255,7 @@ def page_anagrafiche():
         
         conn = get_connection()
         df_op = pd.read_sql_query("SELECT * FROM operai", conn)
-        
+        conn.close()
         st.dataframe(df_op, use_container_width=True)
         
         if not df_op.empty:
@@ -291,7 +292,7 @@ def page_anagrafiche():
         
         conn = get_connection()
         df_forn = pd.read_sql_query("SELECT * FROM fornitori", conn)
-        
+        conn.close()
         st.dataframe(df_forn, use_container_width=True)
         
         if not df_forn.empty:
@@ -313,6 +314,44 @@ def page_anagrafiche():
                     conn = get_connection(); c = conn.cursor()
                     c.execute("DELETE FROM fornitori WHERE nome=?", (forn_sel,))
                     conn.commit(); st.success("Fornitore eliminato!"); st.rerun()
+
+    # --- NUOVA TABELLA ANAGRAFICA CATEGORIE AMMINISTRATIVE ---
+    with tab3:
+        with st.expander("➕ Nuova Categoria di Spesa"):
+            with st.form("nuova_categoria", clear_on_submit=True):
+                nome_cat = st.text_input("Nome Categoria (es. Commercialista, Elettricità)")
+                if st.form_submit_button("Salva Categoria"):
+                    if nome_cat:
+                        conn = get_connection(); c = conn.cursor()
+                        try:
+                            c.execute("INSERT INTO categorie_amministrative (nome) VALUES (?)", (nome_cat,))
+                            conn.commit(); st.success("Categoria aggiunta!")
+                        except sqlite3.IntegrityError:
+                            st.error("Questa categoria esiste già.")
+                        st.rerun()
+        
+        conn = get_connection()
+        df_cat = pd.read_sql_query("SELECT * FROM categorie_amministrative", conn)
+        conn.close()
+        st.dataframe(df_cat, use_container_width=True)
+        
+        if not df_cat.empty:
+            st.subheader("Gestisci Categoria")
+            cat_sel = st.selectbox("Seleziona Categoria", df_cat['nome'].tolist(), key="sel_categoria")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                with st.form("modifica_categoria"):
+                    new_nome = st.text_input("Nuovo Nome", value=cat_sel)
+                    if st.form_submit_button("Rinomina"):
+                        conn = get_connection(); c = conn.cursor()
+                        c.execute("UPDATE categorie_amministrative SET nome=? WHERE nome=?", (new_nome, cat_sel))
+                        conn.commit(); st.success("Categoria rinominata!"); st.rerun()
+            with col2:
+                if st.button("Elimina Categoria", type="primary", key="btn_elimina_categoria"):
+                    conn = get_connection(); c = conn.cursor()
+                    c.execute("DELETE FROM categorie_amministrative WHERE nome=?", (cat_sel,))
+                    conn.commit(); st.success("Categoria eliminata!"); st.rerun()
 
 def page_costi():
     st.title("📉 Inserimento Costi")
