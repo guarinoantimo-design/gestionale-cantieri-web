@@ -34,7 +34,6 @@ def init_db():
     c.execute("CREATE TABLE IF NOT EXISTS operai (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, ruolo TEXT, costo_orario REAL)")
     c.execute("CREATE TABLE IF NOT EXISTS fornitori (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, piva TEXT, contatto TEXT)")
     
-    # Aggiunta colonna 'descrizione' alla tabella costo_manodopera
     c.execute("""
         CREATE TABLE IF NOT EXISTS costo_manodopera (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -53,11 +52,10 @@ def init_db():
     except sqlite3.OperationalError:
         pass
     
-    # Controlla se la colonna 'descrizione' esiste già in costo_manodopera, altrimenti la aggiunge
     try:
         c.execute("ALTER TABLE costo_manodopera ADD COLUMN descrizione TEXT")
     except sqlite3.OperationalError:
-        pass  # La colonna esiste già
+        pass
     
     # Creazione utente admin
     c.execute("SELECT * FROM users WHERE username = 'admin'")
@@ -412,7 +410,6 @@ def page_costi():
             costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=float(costo_standard), key="costo_orario")
             ore = st.number_input("Ore Lavorate", min_value=0.0, step=0.5, key="ore_lavorate")
             
-            # NUOVO CAMPO: DESCRIZIONE LAVORI
             descrizione_lavori = st.text_input("Descrizione Lavori Eseguiti (es. Posa massetto, Getto cemento)", key="desc_lavori")
             
             if st.button("Salva Costo Personale", type="primary", key="btn_salva_manodopera"):
@@ -1079,10 +1076,13 @@ def page_riepilogo():
             st.info("Nessun dato economico disponibile per i cantieri attivi.")
         else:
             df_inc['Tipo'] = 'Incasso'; df_man['Tipo'] = 'Costo Pers'; df_mat['Tipo'] = 'Costo Mat'
-            all_movs = pd.concat([df_inc, df_man, df_mat]).sort_values('data')
+            all_movs = pd.concat([df_inc, df_man, df_mat])
             
             if not all_movs.empty:
+                # Assicuriamoci che le date siano datetime e ordinate
                 all_movs['data'] = pd.to_datetime(all_movs['data'])
+                all_movs = all_movs.sort_values('data')
+                
                 all_movs['Incassi Cum'] = all_movs.apply(lambda x: x['totale'] if x['Tipo'] == 'Incasso' else 0, axis=1).cumsum()
                 all_movs['Costi Cum'] = all_movs.apply(lambda x: x['totale'] if 'Costo' in x['Tipo'] else 0, axis=1).cumsum()
 
@@ -1091,6 +1091,9 @@ def page_riepilogo():
                 ax.plot(all_movs['data'], all_movs['Costi Cum'], label='Costi', color='red', marker='x', linewidth=2)
                 ax.set_title("Andamento Economico Globale (Cantieri Attivi)")
                 ax.legend(); ax.grid(True, linestyle='--', alpha=0.6)
+                # Formattiamo le date sull'asse X in formato italiano
+                import matplotlib.dates as mdates
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y'))
                 plt.xticks(rotation=45); plt.tight_layout()
                 st.pyplot(fig)
             else:
@@ -1130,10 +1133,12 @@ def page_riepilogo():
         query_costi_m = f"SELECT data, totale, 'Costo Pers' as Tipo FROM costo_manodopera WHERE cantiere_id = {cid}"
         query_costi_mat = f"SELECT data, imponibile as totale, 'Costo Mat' as Tipo FROM costo_materiali WHERE cantiere_id = {cid}"
         
-        all_movs = pd.read_sql_query(f"{query_incassi} UNION ALL {query_costi_m} UNION ALL {query_costi_mat} ORDER BY data", conn)
+        all_movs = pd.read_sql_query(f"{query_incassi} UNION ALL {query_costi_m} UNION ALL {query_costi_mat}", conn)
         
         if not all_movs.empty:
             all_movs['data'] = pd.to_datetime(all_movs['data'])
+            all_movs = all_movs.sort_values('data')
+            
             all_movs['Incassi Cum'] = all_movs.apply(lambda x: x['totale'] if x['Tipo'] == 'Incasso' else 0, axis=1).cumsum()
             all_movs['Costi Cum'] = all_movs.apply(lambda x: x['totale'] if 'Costo' in x['Tipo'] else 0, axis=1).cumsum()
 
@@ -1142,8 +1147,9 @@ def page_riepilogo():
             ax.plot(all_movs['data'], all_movs['Costi Cum'], label='Costi', color='red', marker='x', linewidth=2)
             ax.set_title(f"Andamento Economico: {scelta.split(' - ')[1]}")
             ax.legend(); ax.grid(True, linestyle='--', alpha=0.6)
-            plt.xticks(range(len(all_movs)), all_movs['data'].dt.strftime('%d/%m/%Y'), rotation=45, ha='right')
-            plt.tight_layout()
+            import matplotlib.dates as mdates
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y'))
+            plt.xticks(rotation=45); plt.tight_layout()
             st.pyplot(fig)
         else:
             st.info("Nessun movimento economico per questo cantiere.")
