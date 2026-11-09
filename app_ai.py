@@ -33,7 +33,15 @@ def init_db():
     """)
     c.execute("CREATE TABLE IF NOT EXISTS operai (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, ruolo TEXT, costo_orario REAL)")
     c.execute("CREATE TABLE IF NOT EXISTS fornitori (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, piva TEXT, contatto TEXT)")
-    c.execute("CREATE TABLE IF NOT EXISTS costo_manodopera (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, operaio TEXT, ore REAL, costo_orario REAL, totale REAL)")
+    
+    # Aggiunta colonna 'descrizione' alla tabella costo_manodopera
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS costo_manodopera (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, 
+            data TEXT, cantiere_id INTEGER, operaio TEXT, descrizione TEXT, ore REAL, costo_orario REAL, totale REAL
+        )
+    """)
+    
     c.execute("CREATE TABLE IF NOT EXISTS costo_materiali (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, fornitore TEXT, documento TEXT, imponibile REAL, iva REAL, totale REAL)")
     c.execute("CREATE TABLE IF NOT EXISTS costo_amministrativo (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, descrizione TEXT, importo REAL)")
     c.execute("CREATE TABLE IF NOT EXISTS categorie_amministrative (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT UNIQUE)")
@@ -44,6 +52,12 @@ def init_db():
         c.execute("ALTER TABLE preventivi ADD COLUMN stato TEXT DEFAULT 'Attivo'")
     except sqlite3.OperationalError:
         pass
+    
+    # Controlla se la colonna 'descrizione' esiste già in costo_manodopera, altrimenti la aggiunge
+    try:
+        c.execute("ALTER TABLE costo_manodopera ADD COLUMN descrizione TEXT")
+    except sqlite3.OperationalError:
+        pass  # La colonna esiste già
     
     # Creazione utente admin
     c.execute("SELECT * FROM users WHERE username = 'admin'")
@@ -398,11 +412,14 @@ def page_costi():
             costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=float(costo_standard), key="costo_orario")
             ore = st.number_input("Ore Lavorate", min_value=0.0, step=0.5, key="ore_lavorate")
             
+            # NUOVO CAMPO: DESCRIZIONE LAVORI
+            descrizione_lavori = st.text_input("Descrizione Lavori Eseguiti (es. Posa massetto, Getto cemento)", key="desc_lavori")
+            
             if st.button("Salva Costo Personale", type="primary", key="btn_salva_manodopera"):
                 totale = ore * costo_orario
                 conn = get_connection(); c = conn.cursor()
-                c.execute("INSERT INTO costo_manodopera (data, cantiere_id, operaio, ore, costo_orario, totale) VALUES (?,?,?,?,?,?)", 
-                          (str(data_m), cantiere_m, operaio_sel, ore, costo_orario, totale))
+                c.execute("INSERT INTO costo_manodopera (data, cantiere_id, operaio, descrizione, ore, costo_orario, totale) VALUES (?,?,?,?,?,?,?)", 
+                          (str(data_m), cantiere_m, operaio_sel, descrizione_lavori, ore, costo_orario, totale))
                 conn.commit(); conn.close(); st.success("Costo personale registrato!"); st.rerun()
         else:
             st.info("Nessun operaio in anagrafica.")
@@ -474,7 +491,6 @@ def page_costi():
     if st.session_state.modifica_costo_attiva and st.session_state.costo_da_modificare:
         id_unico = st.session_state.costo_da_modificare
         
-        # Controlliamo se il costo esiste ancora nel database (per evitare l'IndexError)
         esiste = False
         tipo_costo = ""
         real_id = ""
@@ -511,7 +527,6 @@ def page_costi():
             st.button("Torna all'elenco", key="btn_torna_elenco_errore")
             st.stop()
         
-        # Se esiste, procediamo con la modifica
         with st.container():
             st.subheader(f"✏️ Modifica Costo: {id_unico}")
             
@@ -526,13 +541,14 @@ def page_costi():
                     m_data = col1.date_input("Data", pd.to_datetime(row['data']).date(), format="DD/MM/YYYY")
                     m_ore = col2.number_input("Ore Lavorate", value=float(row['ore']), step=0.5)
                     m_costo = st.number_input("Costo Orario (€)", value=float(row['costo_orario']), step=1.0)
+                    m_desc = st.text_input("Descrizione Lavori", value=row['descrizione'] if row['descrizione'] else "")
                     
                     col_btn1, col_btn2 = st.columns(2)
                     if col_btn1.form_submit_button("Salva Modifiche", type="primary"):
                         tot = m_ore * m_costo
                         conn = get_connection(); c = conn.cursor()
-                        c.execute("UPDATE costo_manodopera SET data=?, ore=?, costo_orario=?, totale=? WHERE id=?", 
-                                  (str(m_data), m_ore, m_costo, tot, real_id))
+                        c.execute("UPDATE costo_manodopera SET data=?, ore=?, costo_orario=?, descrizione=?, totale=? WHERE id=?", 
+                                  (str(m_data), m_ore, m_costo, m_desc, tot, real_id))
                         conn.commit(); conn.close()
                         st.session_state.modifica_costo_attiva = False
                         st.session_state.costo_da_modificare = None
@@ -643,7 +659,7 @@ def page_costi():
     query_pers = f"""
         SELECT 'M-' || id as ID_Unico, 'Personale' as Tipo, data, 
                (SELECT indirizzo FROM preventivi WHERE id = cantiere_id) as Cantiere, 
-               operaio as Descrizione, totale as Totale
+               operaio || ' - ' || COALESCE(descrizione, '') as Descrizione, totale as Totale
         FROM costo_manodopera
         WHERE data >= '{data_inizio}' AND data <= '{data_fine}'
     """
