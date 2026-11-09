@@ -603,8 +603,7 @@ def page_costi():
         data_inizio = col_f3.date_input("Dal", value=datetime.date.today().replace(month=1, day=1), format="DD/MM/YYYY")
         data_fine = col_f4.date_input("Al", value=datetime.date.today(), format="DD/MM/YYYY")
     
-    # NOTA: per la visualizzazione mostriamo il totale (che include IVA), 
-    # ma per i calcoli aziendali usiamo l'imponibile
+    # NOTA: per la visualizzazione mostriamo l'imponibile, non il totale con IVA
     query_pers = f"""
         SELECT 'M-' || id as ID_Unico, 'Personale' as Tipo, data, 
                (SELECT indirizzo FROM preventivi WHERE id = cantiere_id) as Cantiere, 
@@ -615,7 +614,7 @@ def page_costi():
     query_mat = f"""
         SELECT 'Mat-' || id as ID_Unico, 'Materiale' as Tipo, data, 
                (SELECT indirizzo FROM preventivi WHERE id = cantiere_id) as Cantiere, 
-               fornitore as Descrizione, totale as Totale
+               fornitore as Descrizione, imponibile as Totale
         FROM costo_materiali
         WHERE data >= '{data_inizio}' AND data <= '{data_fine}'
     """
