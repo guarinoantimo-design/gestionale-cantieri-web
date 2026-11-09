@@ -22,6 +22,9 @@ def get_connection():
 def init_db():
     conn = get_connection()
     c = conn.cursor()  # <--- QUESTA RIGA È FONDAMENTALE
+
+    # Attiva la modalità WAL per gestire meglio gli accessi contemporanei
+    c.execute("PRAGMA journal_mode=WAL")
     
     c.execute("CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password_hash TEXT, is_admin INTEGER DEFAULT 0)")
     c.execute("""
