@@ -23,7 +23,7 @@ def init_db():
     conn = get_connection()
     c = conn.cursor()
     
-    c.execute("CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password_hash TEXT)")
+    c.execute("CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password_hash TEXT, is_admin INTEGER DEFAULT 0)")
     c.execute("""
         CREATE TABLE IF NOT EXISTS preventivi (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,14 +34,12 @@ def init_db():
     """)
     c.execute("CREATE TABLE IF NOT EXISTS operai (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, ruolo TEXT, costo_orario REAL)")
     c.execute("CREATE TABLE IF NOT EXISTS fornitori (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, piva TEXT, contatto TEXT)")
-    
     c.execute("""
         CREATE TABLE IF NOT EXISTS costo_manodopera (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
             data TEXT, cantiere_id INTEGER, operaio TEXT, descrizione TEXT, ore REAL, costo_orario REAL, totale REAL
         )
     """)
-    
     c.execute("CREATE TABLE IF NOT EXISTS costo_materiali (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, fornitore TEXT, documento TEXT, imponibile REAL, iva REAL, totale REAL)")
     c.execute("CREATE TABLE IF NOT EXISTS costo_amministrativo (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, descrizione TEXT, importo REAL)")
     c.execute("CREATE TABLE IF NOT EXISTS categorie_amministrative (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT UNIQUE)")
@@ -58,11 +56,16 @@ def init_db():
     except sqlite3.OperationalError:
         pass
     
-    # Creazione utente admin
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    
+    # Creazione utente admin (se non esiste)
     c.execute("SELECT * FROM users WHERE username = 'admin'")
     if not c.fetchone():
         hashed_pw = hashlib.sha256("Cantieri2024!".encode()).hexdigest()
-        c.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", ("admin", hashed_pw))
+        c.execute("INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?)", ("admin", hashed_pw, 1))
     
     conn.commit()
     conn.close()
@@ -84,15 +87,17 @@ def verify_login(username, password):
     conn = get_connection()
     c = conn.cursor()
     hashed_pw = hashlib.sha256(password.encode()).hexdigest()
-    c.execute("SELECT * FROM users WHERE username = ? AND password_hash = ?", (username, hashed_pw))
+    c.execute("SELECT username, is_admin FROM users WHERE username = ? AND password_hash = ?", (username, hashed_pw))
     user = c.fetchone()
     conn.close()
-    return user is not None
+    return user
 
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 if 'current_page' not in st.session_state:
     st.session_state.current_page = "Home"
+if 'is_admin' not in st.session_state:
+    st.session_state.is_admin = False
 
 def login_page():
     st.markdown("<h1 style='text-align: center; color: #2C3E50;'>🏗️ Gestionale Cantieri</h1>", unsafe_allow_html=True)
@@ -103,9 +108,11 @@ def login_page():
             password = st.text_input("Password", type="password")
             submit = st.form_submit_button("Accedi", use_container_width=True)
             if submit:
-                if verify_login(username, password):
+                user = verify_login(username, password)
+                if user:
                     st.session_state.logged_in = True
-                    st.session_state.username = username
+                    st.session_state.username = user[0]
+                    st.session_state.is_admin = (user[1] == 1)
                     st.rerun()
                 else:
                     st.error("Credenziali non valide.")
@@ -378,6 +385,79 @@ def page_anagrafiche():
                     conn = get_connection(); c = conn.cursor()
                     c.execute("DELETE FROM categorie_amministrative WHERE nome=?", (cat_sel,))
                     conn.commit(); conn.close(); st.success("Categoria eliminata!"); st.rerun()
+
+def page_utenti():
+    st.title("👤 Gestione Utenti")
+    st.write("Crea e gestisci gli account che possono accedere al gestionale.")
+    
+    conn = get_connection()
+    
+    # Form per nuovo utente
+    with st.expander("➕ Nuovo Utente"):
+        with st.form("nuovo_utente", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            new_user = col1.text_input("Username")
+            new_pass = col2.text_input("Password", type="password")
+            
+            is_admin_new = st.checkbox("Rendi questo utente Amministratore (può gestire altri utenti)")
+            
+            if st.form_submit_button("Crea Utente"):
+                if new_user and new_pass:
+                    hashed_pw = hashlib.sha256(new_pass.encode()).hexdigest()
+                    try:
+                        c = conn.cursor()
+                        c.execute("INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?)", 
+                                  (new_user, hashed_pw, 1 if is_admin_new else 0))
+                        conn.commit()
+                        st.success(f"Utente '{new_user}' creato con successo!")
+                    except sqlite3.IntegrityError:
+                        st.error("Questo username esiste già.")
+                else:
+                    st.error("Username e Password sono obbligatori.")
+    
+    # Elenco utenti
+    st.subheader("👥 Utenti Registrati")
+    df_users = pd.read_sql_query("SELECT username, is_admin FROM users", conn)
+    
+    if not df_users.empty:
+        df_users['is_admin'] = df_users['is_admin'].apply(lambda x: "Sì" if x == 1 else "No")
+        df_users = df_users.rename(columns={'username': 'Username', 'is_admin': 'Amministratore'})
+        st.dataframe(df_users, use_container_width=True)
+        
+        # Gestione utente esistente
+        st.subheader("Gestisci Utente")
+        user_sel = st.selectbox("Seleziona Utente", df_users['Username'].tolist(), key="sel_user_gest")
+        
+        if user_sel == "admin":
+            st.info("L'utente 'admin' è l'amministratore principale e non può essere modificato o eliminato.")
+        else:
+            col1, col2 = st.columns(2)
+            with col1:
+                with st.form("modifica_utente"):
+                    new_password = st.text_input("Nuova Password (lascia vuoto per non cambiare)", type="password")
+                    new_admin_status = st.checkbox("Amministratore")
+                    
+                    if st.form_submit_button("Aggiorna Utente"):
+                        c = conn.cursor()
+                        if new_password:
+                            hashed_pw = hashlib.sha256(new_password.encode()).hexdigest()
+                            c.execute("UPDATE users SET password_hash=?, is_admin=? WHERE username=?", 
+                                      (hashed_pw, 1 if new_admin_status else 0, user_sel))
+                        else:
+                            c.execute("UPDATE users SET is_admin=? WHERE username=?", 
+                                      (1 if new_admin_status else 0, user_sel))
+                        conn.commit()
+                        st.success("Utente aggiornato!"); st.rerun()
+            with col2:
+                if st.button("Elimina Utente", type="primary", key="btn_elimina_utente"):
+                    c = conn.cursor()
+                    c.execute("DELETE FROM users WHERE username=?", (user_sel,))
+                    conn.commit()
+                    st.success("Utente eliminato!"); st.rerun()
+    else:
+        st.info("Nessun utente registrato (a parte admin).")
+    
+    conn.close()
 
 def page_costi():
     st.title("📉 Inserimento Costi")
@@ -1082,7 +1162,6 @@ def page_riepilogo():
             all_movs = pd.concat([df_inc, df_man, df_mat, df_amm])
             
             if not all_movs.empty:
-                # Assicuriamoci che le date siano datetime e ordinate
                 all_movs['data'] = pd.to_datetime(all_movs['data'])
                 all_movs = all_movs.sort_values('data')
                 
@@ -1094,7 +1173,6 @@ def page_riepilogo():
                 ax.plot(all_movs['data'], all_movs['Costi Cum'], label='Costi', color='red', marker='x', linewidth=2)
                 ax.set_title("Andamento Economico Globale")
                 ax.legend(); ax.grid(True, linestyle='--', alpha=0.6)
-                # Formattiamo le date sull'asse X in formato italiano
                 ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y'))
                 plt.xticks(rotation=45); plt.tight_layout()
                 st.pyplot(fig)
@@ -1103,7 +1181,6 @@ def page_riepilogo():
     else:
         cid = int(scelta.split(" - ")[0])
         
-        # Usiamo l'imponibile per incassi e materiali
         query_dati = f"""
             SELECT 
                 p.importo_contratto,
@@ -1118,7 +1195,6 @@ def page_riepilogo():
         incassi_c = dati['incassi'] or 0
         costi_c = (dati['costi_man'] or 0) + (dati['costi_mat'] or 0)
         
-        # CALCOLO AUTOMATICO DELL'AVANZAMENTO
         perc_avanz = (incassi_c / importo_contratto * 100) if importo_contratto > 0 else 0
         
         col1, col2, col3, col4 = st.columns(4)
@@ -1129,7 +1205,6 @@ def page_riepilogo():
         
         st.progress(min(perc_avanz / 100, 1.0))
         
-        # Usiamo l'imponibile per incassi e materiali
         query_incassi = f"SELECT data, imponibile as totale, 'Incasso' as Tipo FROM incassi WHERE cantiere_id = {cid}"
         query_costi_m = f"SELECT data, totale, 'Costo Pers' as Tipo FROM costo_manodopera WHERE cantiere_id = {cid}"
         query_costi_mat = f"SELECT data, imponibile as totale, 'Costo Mat' as Tipo FROM costo_materiali WHERE cantiere_id = {cid}"
@@ -1178,6 +1253,10 @@ else:
         if st.button("📊 Riepilogo", use_container_width=True, key="sidebar_riepilogo"):
             st.session_state.current_page = "Riepilogo"; st.rerun()
         
+        if st.session_state.is_admin:
+            if st.button("👤 Gestione Utenti", use_container_width=True, key="sidebar_utenti"):
+                st.session_state.current_page = "Utenti"; st.rerun()
+        
         st.divider()
         
         st.markdown("##### 💾 Sicurezza Dati")
@@ -1197,7 +1276,7 @@ else:
         st.divider()
         
         if st.button("🚪 Logout", type="primary", use_container_width=True, key="sidebar_logout"):
-            st.session_state.logged_in = False; st.rerun()
+            st.session_state.logged_in = False; st.session_state.is_admin = False; st.rerun()
 
     if st.session_state.current_page == "Home": page_home()
     elif st.session_state.current_page == "Cantieri": page_cantieri()
@@ -1206,3 +1285,4 @@ else:
     elif st.session_state.current_page == "Incassi": page_incassi()
     elif st.session_state.current_page == "Avanzamento": page_avanzamento()
     elif st.session_state.current_page == "Riepilogo": page_riepilogo()
+    elif st.session_state.current_page == "Utenti" and st.session_state.is_admin: page_utenti()
