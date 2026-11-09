@@ -122,11 +122,11 @@ def page_home():
     st.write("GESTIONE CANTIERE. Situazione attualizzata.")
     
     conn = get_connection()
-    # NOTA: per i materiali usiamo l'imponibile, non il totale
+    # Usiamo l'imponibile per incassi e materiali
     query_totali = """
         SELECT 
             (SELECT COUNT(*) FROM preventivi WHERE stato = 'Attivo') as num_cantieri,
-            (SELECT SUM(totale) FROM incassi i JOIN preventivi p ON i.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_incassi,
+            (SELECT SUM(imponibile) FROM incassi i JOIN preventivi p ON i.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_incassi,
             (SELECT SUM(totale) FROM costo_manodopera c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_costi_pers,
             (SELECT SUM(imponibile) FROM costo_materiali c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_costi_mat,
             (SELECT SUM(importo) FROM costo_amministrativo) as tot_costi_amm
@@ -143,7 +143,7 @@ def page_home():
     with col1:
         st.metric(label="🏗️ Cantieri Attivi", value=num_cantieri)
     with col2:
-        st.metric(label="💰 Incassi Totali", value=f"€ {tot_incassi:,.2f}")
+        st.metric(label="💰 Incassi (Imponibile)", value=f"€ {tot_incassi:,.2f}")
     with col3:
         st.metric(label="📉 Costi Totali", value=f"€ {tot_costi:,.2f}", delta_color="inverse")
     with col4:
@@ -777,12 +777,13 @@ def page_avanzamento():
     
     conn = get_connection()
     
+    # Usiamo l'imponibile per gli incassi
     query_avanzamento = """
         SELECT 
             p.id,
             p.indirizzo as Cantiere,
             p.importo_contratto,
-            COALESCE((SELECT SUM(totale) FROM incassi WHERE cantiere_id = p.id), 0) as Totale_Incassato
+            COALESCE((SELECT SUM(imponibile) FROM incassi WHERE cantiere_id = p.id), 0) as Totale_Incassato
         FROM preventivi p
         WHERE p.stato = 'Attivo'
     """
@@ -820,11 +821,11 @@ def page_riepilogo():
     
     conn = get_connection()
     
-    # NOTA: per i materiali usiamo l'imponibile, non il totale
+    # Usiamo l'imponibile per incassi e materiali
     query_totali = """
         SELECT 
             (SELECT SUM(importo_contratto) FROM preventivi WHERE stato = 'Attivo') as tot_contratti,
-            (SELECT SUM(totale) FROM incassi i JOIN preventivi p ON i.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_incassi,
+            (SELECT SUM(imponibile) FROM incassi i JOIN preventivi p ON i.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_incassi,
             (SELECT SUM(totale) FROM costo_manodopera c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_costi_man,
             (SELECT SUM(imponibile) FROM costo_materiali c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_costi_mat,
             (SELECT SUM(importo) FROM costo_amministrativo) as tot_costi_amm
@@ -839,8 +840,8 @@ def page_riepilogo():
     st.markdown("### 🏢 Totali Aziendali (Solo Cantieri Attivi)")
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Contratti", f"€ {tot_contratti:,.2f}")
-    col2.metric("Incassi", f"€ {tot_incassi:,.2f}")
-    col3.metric("Costi", f"€ {tot_costi:,.2f}", delta_color="inverse")
+    col2.metric("Incassi (Imponibile)", f"€ {tot_incassi:,.2f}")
+    col3.metric("Costi Totali", f"€ {tot_costi:,.2f}", delta_color="inverse")
     col4.metric("Saldo", f"€ {saldo:,.2f}", delta_color="normal")
     
     st.divider()
@@ -852,7 +853,7 @@ def page_riepilogo():
     data_inizio_report = col_date1.date_input("Dal", value=datetime.date.today().replace(day=1), format="DD/MM/YYYY", key="data_inizio_report")
     data_fine_report = col_date2.date_input("Al", value=datetime.date.today(), format="DD/MM/YYYY", key="data_fine_report")
 
-    # NOTA: per i materiali usiamo l'imponibile
+    # Usiamo l'imponibile per i materiali
     query_report = f"""
         SELECT 
             p.indirizzo as Cantiere,
@@ -1014,9 +1015,9 @@ def page_riepilogo():
     scelta = st.selectbox("Seleziona Cantiere per il grafico:", opzioni, key="sel_riepilogo_grafico")
     
     if scelta == "--- TUTTI I CANTIERI ATTIVI ---":
-        query_incassi = "SELECT i.data, i.totale FROM incassi i JOIN preventivi p ON i.cantiere_id = p.id WHERE p.stato = 'Attivo'"
+        # Usiamo l'imponibile per incassi e materiali
+        query_incassi = "SELECT i.data, i.imponibile as totale FROM incassi i JOIN preventivi p ON i.cantiere_id = p.id WHERE p.stato = 'Attivo'"
         query_costi_m = "SELECT c.data, c.totale FROM costo_manodopera c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo'"
-        # NOTA: per i materiali usiamo l'imponibile
         query_costi_mat = "SELECT c.data, c.imponibile as totale FROM costo_materiali c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo'"
         
         df_inc = pd.read_sql_query(query_incassi, conn)
@@ -1035,7 +1036,7 @@ def page_riepilogo():
                 all_movs['Costi Cum'] = all_movs.apply(lambda x: x['totale'] if 'Costo' in x['Tipo'] else 0, axis=1).cumsum()
 
                 fig, ax = plt.subplots(figsize=(10, 4))
-                ax.plot(all_movs['data'], all_movs['Incassi Cum'], label='Incassi', color='green', marker='o', linewidth=2)
+                ax.plot(all_movs['data'], all_movs['Incassi Cum'], label='Incassi (Imponibile)', color='green', marker='o', linewidth=2)
                 ax.plot(all_movs['data'], all_movs['Costi Cum'], label='Costi', color='red', marker='x', linewidth=2)
                 ax.set_title("Andamento Economico Globale (Cantieri Attivi)")
                 ax.legend(); ax.grid(True, linestyle='--', alpha=0.6)
@@ -1046,11 +1047,11 @@ def page_riepilogo():
     else:
         cid = int(scelta.split(" - ")[0])
         
-        # NOTA: per i materiali usiamo l'imponibile
+        # Usiamo l'imponibile per incassi e materiali
         query_dati = f"""
             SELECT 
                 p.importo_contratto,
-                (SELECT SUM(totale) FROM incassi WHERE cantiere_id = {cid}) as incassi,
+                (SELECT SUM(imponibile) FROM incassi WHERE cantiere_id = {cid}) as incassi,
                 (SELECT SUM(totale) FROM costo_manodopera WHERE cantiere_id = {cid}) as costi_man,
                 (SELECT SUM(imponibile) FROM costo_materiali WHERE cantiere_id = {cid}) as costi_mat,
                 (SELECT SUM(importo) FROM avanzamento WHERE cantiere_id = {cid}) as avanzamento
@@ -1067,15 +1068,15 @@ def page_riepilogo():
         
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Contratto", f"€ {importo_contratto:,.2f}")
-        col2.metric("Incassato", f"€ {incassi_c:,.2f}")
+        col2.metric("Incassato (Imponibile)", f"€ {incassi_c:,.2f}")
         col3.metric("Costi", f"€ {costi_c:,.2f}", delta_color="inverse")
         col4.metric("Avanzamento", f"{perc_avanz:.1f}%")
         
         st.progress(min(perc_avanz / 100, 1.0))
         
-        query_incassi = f"SELECT data, totale, 'Incasso' as Tipo FROM incassi WHERE cantiere_id = {cid}"
+        # Usiamo l'imponibile per incassi e materiali
+        query_incassi = f"SELECT data, imponibile as totale, 'Incasso' as Tipo FROM incassi WHERE cantiere_id = {cid}"
         query_costi_m = f"SELECT data, totale, 'Costo Pers' as Tipo FROM costo_manodopera WHERE cantiere_id = {cid}"
-        # NOTA: per i materiali usiamo l'imponibile
         query_costi_mat = f"SELECT data, imponibile as totale, 'Costo Mat' as Tipo FROM costo_materiali WHERE cantiere_id = {cid}"
         
         all_movs = pd.read_sql_query(f"{query_incassi} UNION ALL {query_costi_m} UNION ALL {query_costi_mat} ORDER BY data", conn)
@@ -1086,7 +1087,7 @@ def page_riepilogo():
             all_movs['Costi Cum'] = all_movs.apply(lambda x: x['totale'] if 'Costo' in x['Tipo'] else 0, axis=1).cumsum()
 
             fig, ax = plt.subplots(figsize=(10, 4))
-            ax.plot(all_movs['data'], all_movs['Incassi Cum'], label='Incassi', color='green', marker='o', linewidth=2)
+            ax.plot(all_movs['data'], all_movs['Incassi Cum'], label='Incassi (Imponibile)', color='green', marker='o', linewidth=2)
             ax.plot(all_movs['data'], all_movs['Costi Cum'], label='Costi', color='red', marker='x', linewidth=2)
             ax.set_title(f"Andamento Economico: {scelta.split(' - ')[1]}")
             ax.legend(); ax.grid(True, linestyle='--', alpha=0.6)
