@@ -6,6 +6,7 @@ import hashlib
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import os
 
 # --- CONFIGURAZIONE PAGINA ---
@@ -1067,16 +1068,18 @@ def page_riepilogo():
         query_incassi = "SELECT i.data, i.imponibile as totale FROM incassi i JOIN preventivi p ON i.cantiere_id = p.id WHERE p.stato = 'Attivo'"
         query_costi_m = "SELECT c.data, c.totale FROM costo_manodopera c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo'"
         query_costi_mat = "SELECT c.data, c.imponibile as totale FROM costo_materiali c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo'"
+        query_costi_amm = "SELECT data, importo as totale, 'Costo Amm' as Tipo FROM costo_amministrativo"
         
         df_inc = pd.read_sql_query(query_incassi, conn)
         df_man = pd.read_sql_query(query_costi_m, conn)
         df_mat = pd.read_sql_query(query_costi_mat, conn)
+        df_amm = pd.read_sql_query(query_costi_amm, conn)
         
-        if df_inc.empty and df_man.empty and df_mat.empty:
-            st.info("Nessun dato economico disponibile per i cantieri attivi.")
+        if df_inc.empty and df_man.empty and df_mat.empty and df_amm.empty:
+            st.info("Nessun dato economico disponibile.")
         else:
             df_inc['Tipo'] = 'Incasso'; df_man['Tipo'] = 'Costo Pers'; df_mat['Tipo'] = 'Costo Mat'
-            all_movs = pd.concat([df_inc, df_man, df_mat])
+            all_movs = pd.concat([df_inc, df_man, df_mat, df_amm])
             
             if not all_movs.empty:
                 # Assicuriamoci che le date siano datetime e ordinate
@@ -1089,10 +1092,9 @@ def page_riepilogo():
                 fig, ax = plt.subplots(figsize=(10, 4))
                 ax.plot(all_movs['data'], all_movs['Incassi Cum'], label='Incassi (Imponibile)', color='green', marker='o', linewidth=2)
                 ax.plot(all_movs['data'], all_movs['Costi Cum'], label='Costi', color='red', marker='x', linewidth=2)
-                ax.set_title("Andamento Economico Globale (Cantieri Attivi)")
+                ax.set_title("Andamento Economico Globale")
                 ax.legend(); ax.grid(True, linestyle='--', alpha=0.6)
                 # Formattiamo le date sull'asse X in formato italiano
-                import matplotlib.dates as mdates
                 ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y'))
                 plt.xticks(rotation=45); plt.tight_layout()
                 st.pyplot(fig)
@@ -1107,8 +1109,7 @@ def page_riepilogo():
                 p.importo_contratto,
                 (SELECT SUM(imponibile) FROM incassi WHERE cantiere_id = {cid}) as incassi,
                 (SELECT SUM(totale) FROM costo_manodopera WHERE cantiere_id = {cid}) as costi_man,
-                (SELECT SUM(imponibile) FROM costo_materiali WHERE cantiere_id = {cid}) as costi_mat,
-                (SELECT SUM(importo) FROM avanzamento WHERE cantiere_id = {cid}) as avanzamento
+                (SELECT SUM(imponibile) FROM costo_materiali WHERE cantiere_id = {cid}) as costi_mat
             FROM preventivi p WHERE p.id = {cid}
         """
         dati = pd.read_sql_query(query_dati, conn).iloc[0]
@@ -1147,7 +1148,6 @@ def page_riepilogo():
             ax.plot(all_movs['data'], all_movs['Costi Cum'], label='Costi', color='red', marker='x', linewidth=2)
             ax.set_title(f"Andamento Economico: {scelta.split(' - ')[1]}")
             ax.legend(); ax.grid(True, linestyle='--', alpha=0.6)
-            import matplotlib.dates as mdates
             ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y'))
             plt.xticks(rotation=45); plt.tight_layout()
             st.pyplot(fig)
