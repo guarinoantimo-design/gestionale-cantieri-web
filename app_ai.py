@@ -470,14 +470,52 @@ def page_costi():
 
     st.divider()
 
+    # --- GESTIONE MODIFICA CON CONTROLLO ESISTENZA ---
     if st.session_state.modifica_costo_attiva and st.session_state.costo_da_modificare:
         id_unico = st.session_state.costo_da_modificare
         
+        # Controlliamo se il costo esiste ancora nel database (per evitare l'IndexError)
+        esiste = False
+        tipo_costo = ""
+        real_id = ""
+        
+        if id_unico.startswith("M-"):
+            real_id = id_unico.replace("M-", "")
+            conn = get_connection()
+            check = pd.read_sql_query(f"SELECT id FROM costo_manodopera WHERE id={real_id}", conn)
+            conn.close()
+            if not check.empty:
+                esiste = True
+                tipo_costo = "manodopera"
+        elif id_unico.startswith("Mat-"):
+            real_id = id_unico.replace("Mat-", "")
+            conn = get_connection()
+            check = pd.read_sql_query(f"SELECT id FROM costo_materiali WHERE id={real_id}", conn)
+            conn.close()
+            if not check.empty:
+                esiste = True
+                tipo_costo = "materiali"
+        elif id_unico.startswith("Amm-"):
+            real_id = id_unico.replace("Amm-", "")
+            conn = get_connection()
+            check = pd.read_sql_query(f"SELECT id FROM costo_amministrativo WHERE id={real_id}", conn)
+            conn.close()
+            if not check.empty:
+                esiste = True
+                tipo_costo = "amministrativo"
+        
+        if not esiste:
+            st.warning("Questo costo non esiste più nel database (potrebbe essere stato eliminato o il database è stato ripristinato). La modifica è stata annullata.")
+            st.session_state.modifica_costo_attiva = False
+            st.session_state.costo_da_modificare = None
+            st.button("Torna all'elenco", key="btn_torna_elenco_errore")
+            st.stop()
+        
+        # Se esiste, procediamo con la modifica
         with st.container():
             st.subheader(f"✏️ Modifica Costo: {id_unico}")
             
-            if id_unico.startswith("M-"):
-                real_id = id_unico.replace("M-", "")
+            if tipo_costo == "manodopera":
                 conn = get_connection()
                 df_specifico = pd.read_sql_query(f"SELECT * FROM costo_manodopera WHERE id={real_id}", conn)
                 conn.close()
@@ -508,8 +546,7 @@ def page_costi():
                         st.session_state.costo_da_modificare = None
                         st.success("Costo eliminato!"); st.rerun()
             
-            elif id_unico.startswith("Mat-"):
-                real_id = id_unico.replace("Mat-", "")
+            elif tipo_costo == "materiali":
                 conn = get_connection()
                 df_specifico = pd.read_sql_query(f"SELECT * FROM costo_materiali WHERE id={real_id}", conn)
                 conn.close()
@@ -543,8 +580,7 @@ def page_costi():
                         st.session_state.costo_da_modificare = None
                         st.success("Costo eliminato!"); st.rerun()
 
-            elif id_unico.startswith("Amm-"):
-                real_id = id_unico.replace("Amm-", "")
+            elif tipo_costo == "amministrativo":
                 conn = get_connection()
                 df_specifico = pd.read_sql_query(f"SELECT * FROM costo_amministrativo WHERE id={real_id}", conn)
                 conn.close()
