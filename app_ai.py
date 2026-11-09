@@ -21,7 +21,7 @@ def get_connection():
 
 def init_db():
     conn = get_connection()
-    c = conn.cursor()
+    c = conn.cursor()  # <--- QUESTA RIGA È FONDAMENTALE
     
     c.execute("CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password_hash TEXT, is_admin INTEGER DEFAULT 0)")
     c.execute("""
@@ -61,15 +61,14 @@ def init_db():
     except sqlite3.OperationalError:
         pass
     
-   # Creazione utente admin (se non esiste) e forzatura del ruolo
-c.execute("SELECT * FROM users WHERE username = 'admin'")
-if not c.fetchone():
-    hashed_pw = hashlib.sha256("Cantieri2024!".encode()).hexdigest()
-    c.execute("INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?)", ("admin", hashed_pw, 1))
-else:
-    # Se l'admin esiste già, ci assicuriamo che sia amministratore
-    c.execute("UPDATE users SET is_admin = 1 WHERE username = 'admin'") 
-    
+    # Creazione utente admin (se non esiste) e forzatura del ruolo
+    c.execute("SELECT * FROM users WHERE username = 'admin'")
+    if not c.fetchone():
+        hashed_pw = hashlib.sha256("Cantieri2024!".encode()).hexdigest()
+        c.execute("INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?)", ("admin", hashed_pw, 1))
+    else:
+        # Se l'admin esiste già, ci assicuriamo che sia amministratore
+        c.execute("UPDATE users SET is_admin = 1 WHERE username = 'admin'")
     
     conn.commit()
     conn.close()
