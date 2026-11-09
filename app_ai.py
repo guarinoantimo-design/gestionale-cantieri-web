@@ -61,11 +61,15 @@ def init_db():
     except sqlite3.OperationalError:
         pass
     
-    # Creazione utente admin (se non esiste)
-    c.execute("SELECT * FROM users WHERE username = 'admin'")
-    if not c.fetchone():
-        hashed_pw = hashlib.sha256("Cantieri2024!".encode()).hexdigest()
-        c.execute("INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?)", ("admin", hashed_pw, 1))
+   # Creazione utente admin (se non esiste) e forzatura del ruolo
+c.execute("SELECT * FROM users WHERE username = 'admin'")
+if not c.fetchone():
+    hashed_pw = hashlib.sha256("Cantieri2024!".encode()).hexdigest()
+    c.execute("INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?)", ("admin", hashed_pw, 1))
+else:
+    # Se l'admin esiste già, ci assicuriamo che sia amministratore
+    c.execute("UPDATE users SET is_admin = 1 WHERE username = 'admin'") 
+    
     
     conn.commit()
     conn.close()
