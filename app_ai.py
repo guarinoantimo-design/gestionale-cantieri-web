@@ -15,7 +15,6 @@ DB_NAME = "gestionale_web_v2.db"
 
 # --- FUNZIONI DATABASE ---
 def get_connection():
-    # Connessione standard, gestita in modo sicuro all'interno di ogni pagina
     conn = sqlite3.connect(DB_NAME, check_same_thread=False)
     return conn
 
@@ -40,7 +39,7 @@ def init_db():
     c.execute("CREATE TABLE IF NOT EXISTS categorie_amministrative (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT UNIQUE)")
     c.execute("CREATE TABLE IF NOT EXISTS incassi (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, fattura TEXT, imponibile REAL, iva REAL, totale REAL)")
     
-    # Aggiornamento automatico per database vecchi (aggiunge colonna stato se manca)
+    # Aggiornamento automatico per database vecchi
     try:
         c.execute("ALTER TABLE preventivi ADD COLUMN stato TEXT DEFAULT 'Attivo'")
     except sqlite3.OperationalError:
@@ -123,12 +122,13 @@ def page_home():
     st.write("GESTIONE CANTIERE. Situazione attualizzata.")
     
     conn = get_connection()
+    # NOTA: per i materiali usiamo l'imponibile, non il totale
     query_totali = """
         SELECT 
             (SELECT COUNT(*) FROM preventivi WHERE stato = 'Attivo') as num_cantieri,
             (SELECT SUM(totale) FROM incassi i JOIN preventivi p ON i.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_incassi,
             (SELECT SUM(totale) FROM costo_manodopera c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_costi_pers,
-            (SELECT SUM(totale) FROM costo_materiali c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_costi_mat,
+            (SELECT SUM(imponibile) FROM costo_materiali c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_costi_mat,
             (SELECT SUM(importo) FROM costo_amministrativo) as tot_costi_amm
     """
     res = pd.read_sql_query(query_totali, conn).iloc[0]
@@ -603,6 +603,8 @@ def page_costi():
         data_inizio = col_f3.date_input("Dal", value=datetime.date.today().replace(month=1, day=1), format="DD/MM/YYYY")
         data_fine = col_f4.date_input("Al", value=datetime.date.today(), format="DD/MM/YYYY")
     
+    # NOTA: per la visualizzazione mostriamo il totale (che include IVA), 
+    # ma per i calcoli aziendali usiamo l'imponibile
     query_pers = f"""
         SELECT 'M-' || id as ID_Unico, 'Personale' as Tipo, data, 
                (SELECT indirizzo FROM preventivi WHERE id = cantiere_id) as Cantiere, 
@@ -818,12 +820,13 @@ def page_riepilogo():
     
     conn = get_connection()
     
+    # NOTA: per i materiali usiamo l'imponibile, non il totale
     query_totali = """
         SELECT 
             (SELECT SUM(importo_contratto) FROM preventivi WHERE stato = 'Attivo') as tot_contratti,
             (SELECT SUM(totale) FROM incassi i JOIN preventivi p ON i.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_incassi,
             (SELECT SUM(totale) FROM costo_manodopera c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_costi_man,
-            (SELECT SUM(totale) FROM costo_materiali c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_costi_mat,
+            (SELECT SUM(imponibile) FROM costo_materiali c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo') as tot_costi_mat,
             (SELECT SUM(importo) FROM costo_amministrativo) as tot_costi_amm
     """
     res = pd.read_sql_query(query_totali, conn).iloc[0]
@@ -849,11 +852,12 @@ def page_riepilogo():
     data_inizio_report = col_date1.date_input("Dal", value=datetime.date.today().replace(day=1), format="DD/MM/YYYY", key="data_inizio_report")
     data_fine_report = col_date2.date_input("Al", value=datetime.date.today(), format="DD/MM/YYYY", key="data_fine_report")
 
+    # NOTA: per i materiali usiamo l'imponibile
     query_report = f"""
         SELECT 
             p.indirizzo as Cantiere,
             COALESCE((SELECT SUM(totale) FROM costo_manodopera WHERE cantiere_id = p.id AND data >= '{data_inizio_report}' AND data <= '{data_fine_report}'), 0) as Costo_Personale,
-            COALESCE((SELECT SUM(totale) FROM costo_materiali WHERE cantiere_id = p.id AND data >= '{data_inizio_report}' AND data <= '{data_fine_report}'), 0) as Costo_Materiale
+            COALESCE((SELECT SUM(imponibile) FROM costo_materiali WHERE cantiere_id = p.id AND data >= '{data_inizio_report}' AND data <= '{data_fine_report}'), 0) as Costo_Materiale
         FROM preventivi p
         WHERE p.stato = 'Attivo'
     """
@@ -1012,7 +1016,8 @@ def page_riepilogo():
     if scelta == "--- TUTTI I CANTIERI ATTIVI ---":
         query_incassi = "SELECT i.data, i.totale FROM incassi i JOIN preventivi p ON i.cantiere_id = p.id WHERE p.stato = 'Attivo'"
         query_costi_m = "SELECT c.data, c.totale FROM costo_manodopera c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo'"
-        query_costi_mat = "SELECT c.data, c.totale FROM costo_materiali c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo'"
+        # NOTA: per i materiali usiamo l'imponibile
+        query_costi_mat = "SELECT c.data, c.imponibile as totale FROM costo_materiali c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo'"
         
         df_inc = pd.read_sql_query(query_incassi, conn)
         df_man = pd.read_sql_query(query_costi_m, conn)
@@ -1041,12 +1046,13 @@ def page_riepilogo():
     else:
         cid = int(scelta.split(" - ")[0])
         
+        # NOTA: per i materiali usiamo l'imponibile
         query_dati = f"""
             SELECT 
                 p.importo_contratto,
                 (SELECT SUM(totale) FROM incassi WHERE cantiere_id = {cid}) as incassi,
                 (SELECT SUM(totale) FROM costo_manodopera WHERE cantiere_id = {cid}) as costi_man,
-                (SELECT SUM(totale) FROM costo_materiali WHERE cantiere_id = {cid}) as costi_mat,
+                (SELECT SUM(imponibile) FROM costo_materiali WHERE cantiere_id = {cid}) as costi_mat,
                 (SELECT SUM(importo) FROM avanzamento WHERE cantiere_id = {cid}) as avanzamento
             FROM preventivi p WHERE p.id = {cid}
         """
@@ -1069,7 +1075,8 @@ def page_riepilogo():
         
         query_incassi = f"SELECT data, totale, 'Incasso' as Tipo FROM incassi WHERE cantiere_id = {cid}"
         query_costi_m = f"SELECT data, totale, 'Costo Pers' as Tipo FROM costo_manodopera WHERE cantiere_id = {cid}"
-        query_costi_mat = f"SELECT data, totale, 'Costo Mat' as Tipo FROM costo_materiali WHERE cantiere_id = {cid}"
+        # NOTA: per i materiali usiamo l'imponibile
+        query_costi_mat = f"SELECT data, imponibile as totale, 'Costo Mat' as Tipo FROM costo_materiali WHERE cantiere_id = {cid}"
         
         all_movs = pd.read_sql_query(f"{query_incassi} UNION ALL {query_costi_m} UNION ALL {query_costi_mat} ORDER BY data", conn)
         
