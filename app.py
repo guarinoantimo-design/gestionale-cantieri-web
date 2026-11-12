@@ -987,9 +987,10 @@ def page_riepilogo():
     
     filtro_descrizione = col_r3.text_input("Cerca nella Descrizione", placeholder="Es. massetto, fattura, commercialista...", key="filtro_desc_report")
     
-    query_parts = []
+    # Creiamo una lista di DataFrame da unire in Python (molto più sicuro di UNION ALL)
+    dfs = []
     
-    # Personale
+    # 1. Personale
     if filtro_tipo_costo in ["Tutti", "Personale"]:
         q_p = f"""
             SELECT 'Personale' as Tipo, c.data, p.indirizzo as Cantiere, 
@@ -1002,9 +1003,9 @@ def page_riepilogo():
             q_p += f" AND c.cantiere_id = {cid}"
         if filtro_descrizione:
             q_p += f" AND (c.operaio LIKE '%{filtro_descrizione}%' OR c.descrizione LIKE '%{filtro_descrizione}%')"
-        query_parts.append(q_p)
+        dfs.append(pd.read_sql_query(q_p, conn))
 
-    # Materiali
+    # 2. Materiali
     if filtro_tipo_costo in ["Tutti", "Materiale"]:
         q_m = f"""
             SELECT 'Materiale' as Tipo, c.data, p.indirizzo as Cantiere, 
@@ -1017,9 +1018,9 @@ def page_riepilogo():
             q_m += f" AND c.cantiere_id = {cid}"
         if filtro_descrizione:
             q_m += f" AND c.fornitore LIKE '%{filtro_descrizione}%'"
-        query_parts.append(q_m)
+        dfs.append(pd.read_sql_query(q_m, conn))
 
-    # Amministrativi
+    # 3. Amministrativi
     if filtro_tipo_costo in ["Tutti", "Amministrativo"]:
         q_a = f"""
             SELECT 'Amministrativo' as Tipo, data, 'Spese Generali' as Cantiere, 
@@ -1029,11 +1030,11 @@ def page_riepilogo():
         """
         if filtro_descrizione:
             q_a += f" AND descrizione LIKE '%{filtro_descrizione}%'"
-        query_parts.append(q_a)
+        dfs.append(pd.read_sql_query(q_a, conn))
 
-    if query_parts:
-        query_finale = " UNION ALL ".join(query_parts) + " ORDER BY data DESC"
-        df_report = pd.read_sql_query(query_finale, conn)
+    if dfs:
+        # Uniamo i DataFrame in Python
+        df_report = pd.concat(dfs, ignore_index=True)
         
         if df_report.empty:
             st.info("Nessun costo trovato con i filtri selezionati.")
