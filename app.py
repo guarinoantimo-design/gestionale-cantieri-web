@@ -979,20 +979,16 @@ def page_riepilogo():
 
     col_r1, col_r2, col_r3 = st.columns(3)
     
-    # Filtro Cantiere
     cantieri = get_cantieri()
     opzioni_cantieri = ["Tutti i cantieri"] + [f"{row['id']} - {row['indirizzo']}" for _, row in cantieri.iterrows()]
     filtro_cantiere = col_r1.selectbox("Seleziona Cantiere", opzioni_cantieri, key="filtro_cantiere_report")
     
-    # Filtro Tipo Costo
     filtro_tipo_costo = col_r2.selectbox("Tipo di Costo", ["Tutti", "Personale", "Materiale", "Amministrativo"], key="filtro_tipo_report")
     
-    # Filtro Descrizione
     filtro_descrizione = col_r3.text_input("Cerca nella Descrizione", placeholder="Es. massetto, fattura, commercialista...", key="filtro_desc_report")
     
     query_parts = []
     
-    # Personale
     if filtro_tipo_costo in ["Tutti", "Personale"]:
         q_p = f"""
             SELECT 'Personale' as Tipo, c.data, p.indirizzo as Cantiere, 
@@ -1007,7 +1003,6 @@ def page_riepilogo():
             q_p += f" AND (c.operaio LIKE '%{filtro_descrizione}%' OR c.descrizione LIKE '%{filtro_descrizione}%')"
         query_parts.append(q_p)
 
-    # Materiali
     if filtro_tipo_costo in ["Tutti", "Materiale"]:
         q_m = f"""
             SELECT 'Materiale' as Tipo, c.data, p.indirizzo as Cantiere, 
@@ -1022,7 +1017,6 @@ def page_riepilogo():
             q_m += f" AND c.fornitore LIKE '%{filtro_descrizione}%'"
         query_parts.append(q_m)
 
-    # Amministrativi
     if filtro_tipo_costo in ["Tutti", "Amministrativo"]:
         q_a = f"""
             SELECT 'Amministrativo' as Tipo, data, 'Spese Generali' as Cantiere, 
