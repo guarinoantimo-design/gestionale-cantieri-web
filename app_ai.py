@@ -813,8 +813,8 @@ def page_costi():
                 style_cell = ParagraphStyle(
                     'cell_style',
                     parent=styles['Normal'],
-                    fontSize=9,
-                    leading=11,
+                    fontSize=8,
+                    leading=10,
                     alignment=0
                 )
 
@@ -828,10 +828,8 @@ def page_costi():
                     elements.append(Paragraph(f"Tipo: {filtro_tipo}", styles['Normal']))
                 elements.append(Spacer(1, 12))
                 
-                # Intestazioni
                 data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Totale (€)"]]
                 
-                # Righe (usando Paragraph per il testo lungo)
                 for _, row in df_costi.iterrows():
                     data_rows.append([
                         row['Tipo'], 
@@ -843,7 +841,8 @@ def page_costi():
                 
                 data_rows.append(["", "", "", "TOTALE GENERALE", f"€ {totale_filtrato:,.2f}"])
                 
-                t = Table(data_rows, colWidths=[80, 70, 200, 200, 100], repeatRows=1)
+                # Colonne bilanciate: Tipo(80) Data(70) Cantiere(180) Descrizione(200) Importo(80)
+                t = Table(data_rows, colWidths=[80, 70, 180, 200, 80], repeatRows=1)
                 t.setStyle(TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
                     ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -1075,8 +1074,8 @@ def page_riepilogo():
                     style_cell = ParagraphStyle(
                         'cell_style',
                         parent=styles['Normal'],
-                        fontSize=9,
-                        leading=11,
+                        fontSize=8,
+                        leading=10,
                         alignment=0
                     )
 
@@ -1097,7 +1096,8 @@ def page_riepilogo():
                         ])
                     data_rows.append(["", "", "", "TOTALE", f"€ {totale_importo:,.2f}"])
                     
-                    t = Table(data_rows, colWidths=[80, 70, 200, 200, 100], repeatRows=1)
+                    # Colonne bilanciate
+                    t = Table(data_rows, colWidths=[80, 70, 180, 200, 80], repeatRows=1)
                     t.setStyle(TableStyle([
                         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
                         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
