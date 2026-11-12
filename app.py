@@ -9,6 +9,14 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import os
 
+# Librerie per il PDF con gestione testo
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.pdfgen import canvas
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Gestionale Cantieri", page_icon="🏗️", layout="wide")
 
@@ -796,17 +804,20 @@ def page_costi():
         
         if st.button("📄 Esporta Risultati in PDF", type="primary", key="btn_export_pdf_costi"):
             try:
-                from reportlab.lib.pagesizes import A4, landscape
-                from reportlab.pdfgen import canvas
-                from reportlab.lib import colors
-                from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-                from reportlab.lib.styles import getSampleStyleSheet
-                
                 filename = f"Riepilogo_Costi_{datetime.date.today()}.pdf"
                 doc = SimpleDocTemplate(filename, pagesize=landscape(A4))
                 elements = []
                 styles = getSampleStyleSheet()
                 
+                # Stile per il testo nelle celle (per andare a capo)
+                style_cell = ParagraphStyle(
+                    'cell_style',
+                    parent=styles['Normal'],
+                    fontSize=8,
+                    leading=10,
+                    alignment=0
+                )
+
                 data_inizio_it = formatta_data_italiana(data_inizio)
                 data_fine_it = formatta_data_italiana(data_fine)
                 
@@ -818,13 +829,20 @@ def page_costi():
                 elements.append(Spacer(1, 12))
                 
                 data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Totale (€)"]]
+                
                 for _, row in df_costi.iterrows():
                     data_rows.append([
-                        row['Tipo'], formatta_data_italiana(row['Data']), row['Cantiere'], row['Descrizione'], f"{row['Totale']:,.2f}"
+                        row['Tipo'], 
+                        formatta_data_italiana(row['Data']), 
+                        Paragraph(row['Cantiere'], style_cell), 
+                        Paragraph(row['Descrizione'], style_cell), 
+                        f"{row['Totale']:,.2f}"
                     ])
+                
                 data_rows.append(["", "", "", "TOTALE GENERALE", f"€ {totale_filtrato:,.2f}"])
                 
-                t = Table(data_rows, colWidths=[80, 70, 200, 200, 100])
+                # Colonne bilanciate: Tipo(80) Data(70) Cantiere(180) Descrizione(200) Importo(80)
+                t = Table(data_rows, colWidths=[80, 70, 180, 200, 80], repeatRows=1)
                 t.setStyle(TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
                     ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -987,10 +1005,8 @@ def page_riepilogo():
     
     filtro_descrizione = col_r3.text_input("Cerca nella Descrizione", placeholder="Es. massetto, fattura, commercialista...", key="filtro_desc_report")
     
-    # Creiamo una lista di DataFrame da unire in Python (molto più sicuro di UNION ALL)
     dfs = []
     
-    # 1. Personale
     if filtro_tipo_costo in ["Tutti", "Personale"]:
         q_p = f"""
             SELECT 'Personale' as Tipo, c.data, p.indirizzo as Cantiere, 
@@ -1005,7 +1021,6 @@ def page_riepilogo():
             q_p += f" AND (c.operaio LIKE '%{filtro_descrizione}%' OR c.descrizione LIKE '%{filtro_descrizione}%')"
         dfs.append(pd.read_sql_query(q_p, conn))
 
-    # 2. Materiali
     if filtro_tipo_costo in ["Tutti", "Materiale"]:
         q_m = f"""
             SELECT 'Materiale' as Tipo, c.data, p.indirizzo as Cantiere, 
@@ -1020,7 +1035,6 @@ def page_riepilogo():
             q_m += f" AND c.fornitore LIKE '%{filtro_descrizione}%'"
         dfs.append(pd.read_sql_query(q_m, conn))
 
-    # 3. Amministrativi
     if filtro_tipo_costo in ["Tutti", "Amministrativo"]:
         q_a = f"""
             SELECT 'Amministrativo' as Tipo, data, 'Spese Generali' as Cantiere, 
@@ -1033,7 +1047,6 @@ def page_riepilogo():
         dfs.append(pd.read_sql_query(q_a, conn))
 
     if dfs:
-        # Uniamo i DataFrame in Python
         df_report = pd.concat(dfs, ignore_index=True)
         
         if df_report.empty:
@@ -1052,17 +1065,20 @@ def page_riepilogo():
             
             if st.button("📄 Esporta Report in PDF", type="primary", key="btn_export_report_dettagliato"):
                 try:
-                    from reportlab.lib.pagesizes import A4, landscape
-                    from reportlab.pdfgen import canvas
-                    from reportlab.lib import colors
-                    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-                    from reportlab.lib.styles import getSampleStyleSheet
-                    
                     filename = f"Report_Costi_Dettagliato_{datetime.date.today()}.pdf"
                     doc = SimpleDocTemplate(filename, pagesize=landscape(A4))
                     elements = []
                     styles = getSampleStyleSheet()
                     
+                    # Stile per il testo nelle celle
+                    style_cell = ParagraphStyle(
+                        'cell_style',
+                        parent=styles['Normal'],
+                        fontSize=8,
+                        leading=10,
+                        alignment=0
+                    )
+
                     data_inizio_it = formatta_data_italiana(data_inizio_report)
                     data_fine_it = formatta_data_italiana(data_fine_report)
                     
@@ -1072,11 +1088,16 @@ def page_riepilogo():
                     data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Importo (€)"]]
                     for _, row in df_report.iterrows():
                         data_rows.append([
-                            row['Tipo'], formatta_data_italiana(row['data']), row['Cantiere'], row['Descrizione'], f"{row['Importo']:,.2f}"
+                            row['Tipo'], 
+                            formatta_data_italiana(row['data']), 
+                            Paragraph(row['Cantiere'], style_cell), 
+                            Paragraph(row['Descrizione'], style_cell), 
+                            f"{row['Importo']:,.2f}"
                         ])
                     data_rows.append(["", "", "", "TOTALE", f"€ {totale_importo:,.2f}"])
                     
-                    t = Table(data_rows, colWidths=[80, 70, 200, 200, 100])
+                    # Colonne bilanciate
+                    t = Table(data_rows, colWidths=[80, 70, 180, 200, 80], repeatRows=1)
                     t.setStyle(TableStyle([
                         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
                         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
