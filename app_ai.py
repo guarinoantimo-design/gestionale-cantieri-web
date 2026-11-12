@@ -21,9 +21,8 @@ def get_connection():
 
 def init_db():
     conn = get_connection()
-    c = conn.cursor()  # <--- QUESTA RIGA È FONDAMENTALE
-
-    # Attiva la modalità WAL per gestire meglio gli accessi contemporanei
+    c = conn.cursor()
+    
     c.execute("PRAGMA journal_mode=WAL")
     
     c.execute("CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password_hash TEXT, is_admin INTEGER DEFAULT 0)")
@@ -48,7 +47,6 @@ def init_db():
     c.execute("CREATE TABLE IF NOT EXISTS categorie_amministrative (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT UNIQUE)")
     c.execute("CREATE TABLE IF NOT EXISTS incassi (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, fattura TEXT, imponibile REAL, iva REAL, totale REAL)")
     
-    # Aggiornamento automatico per database vecchi
     try:
         c.execute("ALTER TABLE preventivi ADD COLUMN stato TEXT DEFAULT 'Attivo'")
     except sqlite3.OperationalError:
@@ -64,13 +62,11 @@ def init_db():
     except sqlite3.OperationalError:
         pass
     
-    # Creazione utente admin (se non esiste) e forzatura del ruolo
     c.execute("SELECT * FROM users WHERE username = 'admin'")
     if not c.fetchone():
         hashed_pw = hashlib.sha256("Cantieri2024!".encode()).hexdigest()
         c.execute("INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?)", ("admin", hashed_pw, 1))
     else:
-        # Se l'admin esiste già, ci assicuriamo che sia amministratore
         c.execute("UPDATE users SET is_admin = 1 WHERE username = 'admin'")
     
     conn.commit()
@@ -148,7 +144,6 @@ def page_home():
     st.write("GESTIONE CANTIERE. Situazione attualizzata.")
     
     conn = get_connection()
-    # Usiamo l'imponibile per incassi e materiali
     query_totali = """
         SELECT 
             (SELECT COUNT(*) FROM preventivi WHERE stato = 'Attivo') as num_cantieri,
@@ -398,7 +393,6 @@ def page_utenti():
     
     conn = get_connection()
     
-    # Form per nuovo utente
     with st.expander("➕ Nuovo Utente"):
         with st.form("nuovo_utente", clear_on_submit=True):
             col1, col2 = st.columns(2)
@@ -421,7 +415,6 @@ def page_utenti():
                 else:
                     st.error("Username e Password sono obbligatori.")
     
-    # Elenco utenti
     st.subheader("👥 Utenti Registrati")
     df_users = pd.read_sql_query("SELECT username, is_admin FROM users", conn)
     
@@ -430,7 +423,6 @@ def page_utenti():
         df_users = df_users.rename(columns={'username': 'Username', 'is_admin': 'Amministratore'})
         st.dataframe(df_users, use_container_width=True)
         
-        # Gestione utente esistente
         st.subheader("Gestisci Utente")
         user_sel = st.selectbox("Seleziona Utente", df_users['Username'].tolist(), key="sel_user_gest")
         
@@ -571,7 +563,6 @@ def page_costi():
 
     st.divider()
 
-    # --- GESTIONE MODIFICA CON CONTROLLO ESISTENZA ---
     if st.session_state.modifica_costo_attiva and st.session_state.costo_da_modificare:
         id_unico = st.session_state.costo_da_modificare
         
@@ -739,7 +730,6 @@ def page_costi():
         data_inizio = col_f3.date_input("Dal", value=datetime.date.today().replace(month=1, day=1), format="DD/MM/YYYY")
         data_fine = col_f4.date_input("Al", value=datetime.date.today(), format="DD/MM/YYYY")
     
-    # NOTA: per la visualizzazione mostriamo l'imponibile, non il totale con IVA
     query_pers = f"""
         SELECT 'M-' || id as ID_Unico, 'Personale' as Tipo, data, 
                (SELECT indirizzo FROM preventivi WHERE id = cantiere_id) as Cantiere, 
@@ -912,7 +902,6 @@ def page_avanzamento():
     
     conn = get_connection()
     
-    # Usiamo l'imponibile per gli incassi
     query_avanzamento = """
         SELECT 
             p.id,
@@ -956,7 +945,6 @@ def page_riepilogo():
     
     conn = get_connection()
     
-    # Usiamo l'imponibile per incassi e materiali
     query_totali = """
         SELECT 
             (SELECT SUM(importo_contratto) FROM preventivi WHERE stato = 'Attivo') as tot_contratti,
@@ -981,163 +969,142 @@ def page_riepilogo():
     
     st.divider()
 
-    st.subheader("📋 Report Costi per Cantiere")
-    st.write("Riepilogo delle spese di Personale, Materiali e Amministrative suddivise per periodo e cantiere.")
+    # --- REPORT COSTI GRANULARE CON FILTRO DATE ---
+    st.subheader("📋 Report Costi Dettagliato")
+    st.write("Filtra per periodo, Cantiere, Tipo di Costo e Descrizione per un'analisi approfondita.")
 
-    col_date1, col_date2 = st.columns(2)
-    data_inizio_report = col_date1.date_input("Dal", value=datetime.date.today().replace(day=1), format="DD/MM/YYYY", key="data_inizio_report")
-    data_fine_report = col_date2.date_input("Al", value=datetime.date.today(), format="DD/MM/YYYY", key="data_fine_report")
+    col_d1, col_d2 = st.columns(2)
+    data_inizio_report = col_d1.date_input("Dal", value=datetime.date.today().replace(day=1), format="DD/MM/YYYY", key="data_inizio_report")
+    data_fine_report = col_d2.date_input("Al", value=datetime.date.today(), format="DD/MM/YYYY", key="data_fine_report")
 
-    # Usiamo l'imponibile per i materiali
-    query_report = f"""
-        SELECT 
-            p.indirizzo as Cantiere,
-            COALESCE((SELECT SUM(totale) FROM costo_manodopera WHERE cantiere_id = p.id AND data >= '{data_inizio_report}' AND data <= '{data_fine_report}'), 0) as Costo_Personale,
-            COALESCE((SELECT SUM(imponibile) FROM costo_materiali WHERE cantiere_id = p.id AND data >= '{data_inizio_report}' AND data <= '{data_fine_report}'), 0) as Costo_Materiale
-        FROM preventivi p
-        WHERE p.stato = 'Attivo'
-    """
-    df_report = pd.read_sql_query(query_report, conn)
-
-    if df_report.empty:
-        st.info("Nessun cantiere attivo trovato.")
-        tot_generale_cantieri = 0
-    else:
-        df_report['Totale Cantiere'] = df_report['Costo_Personale'] + df_report['Costo_Materiale']
-        
-        tot_personale_cantieri = df_report['Costo_Personale'].sum()
-        tot_materiale_cantieri = df_report['Costo_Materiale'].sum()
-        tot_generale_cantieri = df_report['Totale Cantiere'].sum()
-        
-        df_report.loc['Totale Cantieri'] = ['TOTALE CANTIERI', tot_personale_cantieri, tot_materiale_cantieri, tot_generale_cantieri]
-        
-        df_report_visual = df_report.copy()
-        for col in ['Costo_Personale', 'Costo_Materiale', 'Totale Cantiere']:
-            df_report_visual[col] = df_report_visual[col].apply(lambda x: f"€ {x:,.2f}")
-            
-        df_report_visual = df_report_visual.rename(columns={
-            'Costo_Personale': 'Costo Personale',
-            'Costo_Materiale': 'Costo Materiale'
-        })
-        
-        st.dataframe(df_report_visual, use_container_width=True)
-
-    st.markdown("#### 🏢 Spese Generali (Amministrative)")
+    col_r1, col_r2, col_r3 = st.columns(3)
     
-    query_amm_dettaglio = f"""
-        SELECT descrizione as Descrizione, SUM(importo) as Totale
-        FROM costo_amministrativo
-        WHERE data >= '{data_inizio_report}' AND data <= '{data_fine_report}'
-        GROUP BY descrizione
-        ORDER BY Totale DESC
-    """
-    df_amm = pd.read_sql_query(query_amm_dettaglio, conn)
+    cantieri = get_cantieri()
+    opzioni_cantieri = ["Tutti i cantieri"] + [f"{row['id']} - {row['indirizzo']}" for _, row in cantieri.iterrows()]
+    filtro_cantiere = col_r1.selectbox("Seleziona Cantiere", opzioni_cantieri, key="filtro_cantiere_report")
     
-    if df_amm.empty:
-        tot_amministrativo = 0
-        st.info("Nessuna spesa amministrativa registrata nel periodo selezionato.")
-    else:
-        tot_amministrativo = df_amm['Totale'].sum()
-        
-        df_amm.loc['Totale'] = ['TOTALE SPESE GENERALI', tot_amministrativo]
-        
-        df_amm_visual = df_amm.copy()
-        df_amm_visual['Totale'] = df_amm_visual['Totale'].apply(lambda x: f"€ {x:,.2f}")
-        
-        st.dataframe(df_amm_visual, use_container_width=True)
-        
-        st.info("Queste spese non sono legate a un cantiere specifico e vengono conteggiate nel totale aziendale.")
+    filtro_tipo_costo = col_r2.selectbox("Tipo di Costo", ["Tutti", "Personale", "Materiale", "Amministrativo"], key="filtro_tipo_report")
+    
+    filtro_descrizione = col_r3.text_input("Cerca nella Descrizione", placeholder="Es. massetto, fattura, commercialista...", key="filtro_desc_report")
+    
+    # Creiamo una lista di DataFrame da unire in Python (molto più sicuro di UNION ALL)
+    dfs = []
+    
+    # 1. Personale
+    if filtro_tipo_costo in ["Tutti", "Personale"]:
+        q_p = f"""
+            SELECT 'Personale' as Tipo, c.data, p.indirizzo as Cantiere, 
+                   c.operaio || ' - ' || COALESCE(c.descrizione, '') as Descrizione, c.totale as Importo
+            FROM costo_manodopera c JOIN preventivi p ON c.cantiere_id = p.id
+            WHERE c.data >= '{data_inizio_report}' AND c.data <= '{data_fine_report}'
+        """
+        if filtro_cantiere != "Tutti i cantieri":
+            cid = filtro_cantiere.split(" - ")[0]
+            q_p += f" AND c.cantiere_id = {cid}"
+        if filtro_descrizione:
+            q_p += f" AND (c.operaio LIKE '%{filtro_descrizione}%' OR c.descrizione LIKE '%{filtro_descrizione}%')"
+        dfs.append(pd.read_sql_query(q_p, conn))
 
-    st.markdown("---")
-    totale_assoluto = tot_generale_cantieri + tot_amministrativo
-    st.markdown(f"### 💰 Totale Generale Assoluto (Cantieri + Amministrative): **€ {totale_assoluto:,.2f}**")
+    # 2. Materiali
+    if filtro_tipo_costo in ["Tutti", "Materiale"]:
+        q_m = f"""
+            SELECT 'Materiale' as Tipo, c.data, p.indirizzo as Cantiere, 
+                   c.fornitore as Descrizione, c.imponibile as Importo
+            FROM costo_materiali c JOIN preventivi p ON c.cantiere_id = p.id
+            WHERE c.data >= '{data_inizio_report}' AND c.data <= '{data_fine_report}'
+        """
+        if filtro_cantiere != "Tutti i cantieri":
+            cid = filtro_cantiere.split(" - ")[0]
+            q_m += f" AND c.cantiere_id = {cid}"
+        if filtro_descrizione:
+            q_m += f" AND c.fornitore LIKE '%{filtro_descrizione}%'"
+        dfs.append(pd.read_sql_query(q_m, conn))
 
-    if st.button("📄 Esporta Report Costi in PDF", type="primary", key="btn_export_report_costi"):
-        try:
-            from reportlab.lib.pagesizes import A4, landscape
-            from reportlab.pdfgen import canvas
-            from reportlab.lib import colors
-            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-            from reportlab.lib.styles import getSampleStyleSheet
+    # 3. Amministrativi
+    if filtro_tipo_costo in ["Tutti", "Amministrativo"]:
+        q_a = f"""
+            SELECT 'Amministrativo' as Tipo, data, 'Spese Generali' as Cantiere, 
+                   descrizione as Descrizione, importo as Importo
+            FROM costo_amministrativo
+            WHERE data >= '{data_inizio_report}' AND data <= '{data_fine_report}'
+        """
+        if filtro_descrizione:
+            q_a += f" AND descrizione LIKE '%{filtro_descrizione}%'"
+        dfs.append(pd.read_sql_query(q_a, conn))
+
+    if dfs:
+        # Uniamo i DataFrame in Python
+        df_report = pd.concat(dfs, ignore_index=True)
+        
+        if df_report.empty:
+            st.info("Nessun costo trovato con i filtri selezionati.")
+        else:
+            totale_importo = df_report['Importo'].sum()
             
-            data_inizio_it = formatta_data_italiana(data_inizio_report)
-            data_fine_it = formatta_data_italiana(data_fine_report)
+            df_report['Data'] = df_report['data'].apply(formatta_data_italiana)
+            df_visual = df_report[['Tipo', 'Data', 'Cantiere', 'Descrizione', 'Importo']].copy()
+            df_visual['Importo'] = df_visual['Importo'].apply(lambda x: f"€ {x:,.2f}")
             
-            filename = f"Report_Costi_{data_inizio_it.replace('/', '-')}_al_{data_fine_it.replace('/', '-')}.pdf"
-            doc = SimpleDocTemplate(filename, pagesize=landscape(A4))
-            elements = []
-            styles = getSampleStyleSheet()
+            riga_totale = pd.DataFrame([{'Tipo': '', 'Data': '', 'Cantiere': '', 'Descrizione': 'TOTALE', 'Importo': f"€ {totale_importo:,.2f}"}])
+            df_visual = pd.concat([df_visual, riga_totale], ignore_index=True)
             
-            elements.append(Paragraph(f"Report Costi dal {data_inizio_it} al {data_fine_it}", styles['Title']))
-            elements.append(Spacer(1, 12))
+            st.dataframe(df_visual, use_container_width=True)
             
-            data_rows = [["Cantiere", "Costo Personale", "Costo Materiale", "Totale Cantiere"]]
-            for index, row in df_report.iterrows():
-                data_rows.append([
-                    row['Cantiere'], 
-                    f"€ {row['Costo_Personale']:,.2f}", 
-                    f"€ {row['Costo_Materiale']:,.2f}", 
-                    f"€ {row['Totale Cantiere']:,.2f}"
-                ])
-            
-            t = Table(data_rows, colWidths=[200, 120, 120, 120])
-            t.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#F4F6F7")),
-                ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor("#E0E0E0")),
-                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#BDC3C7")),
-                ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
-            ]))
-            elements.append(t)
-            elements.append(Spacer(1, 20))
-            
-            elements.append(Paragraph("Spese Generali (Amministrative)", styles['Heading2']))
-            elements.append(Spacer(1, 5))
-            
-            if not df_amm.empty:
-                data_amm = [["Descrizione", "Totale"]]
-                for index, row in df_amm.iterrows():
-                    data_amm.append([
-                        row['Descrizione'], 
-                        f"€ {row['Totale']:,.2f}"
-                    ])
-                
-                t_amm = Table(data_amm, colWidths=[300, 150])
-                t_amm.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#7F8C8D")),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#F4F6F7")),
-                    ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor("#E0E0E0")),
-                    ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#BDC3C7")),
-                    ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
-                ]))
-                elements.append(t_amm)
-            
-            elements.append(Spacer(1, 20))
-            
-            elements.append(Paragraph(f"<b>Totale Generale Assoluto: € {totale_assoluto:,.2f}</b>", styles['Heading2']))
-            
-            doc.build(elements)
-            st.success(f"PDF generato: {filename}")
-            
-            with open(filename, "rb") as f:
-                st.download_button(
-                    label="⬇️ Scarica il PDF",
-                    data=f,
-                    file_name=filename,
-                    mime="application/pdf"
-                )
-        except Exception as e:
-            st.error(f"Errore durante la generazione del PDF: {e}")
+            if st.button("📄 Esporta Report in PDF", type="primary", key="btn_export_report_dettagliato"):
+                try:
+                    from reportlab.lib.pagesizes import A4, landscape
+                    from reportlab.pdfgen import canvas
+                    from reportlab.lib import colors
+                    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+                    from reportlab.lib.styles import getSampleStyleSheet
+                    
+                    filename = f"Report_Costi_Dettagliato_{datetime.date.today()}.pdf"
+                    doc = SimpleDocTemplate(filename, pagesize=landscape(A4))
+                    elements = []
+                    styles = getSampleStyleSheet()
+                    
+                    data_inizio_it = formatta_data_italiana(data_inizio_report)
+                    data_fine_it = formatta_data_italiana(data_fine_report)
+                    
+                    elements.append(Paragraph(f"Report Costi dal {data_inizio_it} al {data_fine_it} - {filtro_tipo_costo} - {filtro_cantiere}", styles['Title']))
+                    elements.append(Spacer(1, 12))
+                    
+                    data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Importo (€)"]]
+                    for _, row in df_report.iterrows():
+                        data_rows.append([
+                            row['Tipo'], formatta_data_italiana(row['data']), row['Cantiere'], row['Descrizione'], f"{row['Importo']:,.2f}"
+                        ])
+                    data_rows.append(["", "", "", "TOTALE", f"€ {totale_importo:,.2f}"])
+                    
+                    t = Table(data_rows, colWidths=[80, 70, 200, 200, 100])
+                    t.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                        ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#F4F6F7")),
+                        ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#BDC3C7")),
+                        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                    ]))
+                    elements.append(t)
+                    
+                    doc.build(elements)
+                    st.success(f"PDF generato con successo: {filename}")
+                    
+                    with open(filename, "rb") as f:
+                        st.download_button(
+                            label="⬇️ Scarica il PDF",
+                            data=f,
+                            file_name=filename,
+                            mime="application/pdf"
+                        )
+                except Exception as e:
+                    st.error(f"Errore durante la generazione del PDF: {e}")
 
     st.divider()
 
+    # --- GRAFICI ESISTENTI ---
     st.subheader("📈 Andamento Economico")
     df_cantieri = pd.read_sql_query("SELECT id, indirizzo FROM preventivi", conn)
     
@@ -1150,7 +1117,6 @@ def page_riepilogo():
     scelta = st.selectbox("Seleziona Cantiere per il grafico:", opzioni, key="sel_riepilogo_grafico")
     
     if scelta == "--- TUTTI I CANTIERI ATTIVI ---":
-        # Usiamo l'imponibile per incassi e materiali
         query_incassi = "SELECT i.data, i.imponibile as totale FROM incassi i JOIN preventivi p ON i.cantiere_id = p.id WHERE p.stato = 'Attivo'"
         query_costi_m = "SELECT c.data, c.totale FROM costo_manodopera c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo'"
         query_costi_mat = "SELECT c.data, c.imponibile as totale FROM costo_materiali c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo'"
