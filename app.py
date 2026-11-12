@@ -969,9 +969,13 @@ def page_riepilogo():
     
     st.divider()
 
-    # --- NUOVO REPORT COSTI GRANULARE ---
+    # --- REPORT COSTI GRANULARE CON FILTRO DATE ---
     st.subheader("📋 Report Costi Dettagliato")
-    st.write("Filtra per Cantiere, Tipo di Costo e Descrizione per un'analisi approfondita.")
+    st.write("Filtra per periodo, Cantiere, Tipo di Costo e Descrizione per un'analisi approfondita.")
+
+    col_d1, col_d2 = st.columns(2)
+    data_inizio_report = col_d1.date_input("Dal", value=datetime.date.today().replace(day=1), format="DD/MM/YYYY", key="data_inizio_report")
+    data_fine_report = col_d2.date_input("Al", value=datetime.date.today(), format="DD/MM/YYYY", key="data_fine_report")
 
     col_r1, col_r2, col_r3 = st.columns(3)
     
@@ -983,10 +987,9 @@ def page_riepilogo():
     # Filtro Tipo Costo
     filtro_tipo_costo = col_r2.selectbox("Tipo di Costo", ["Tutti", "Personale", "Materiale", "Amministrativo"], key="filtro_tipo_report")
     
-    # Filtro Descrizione (testo libero)
+    # Filtro Descrizione
     filtro_descrizione = col_r3.text_input("Cerca nella Descrizione", placeholder="Es. massetto, fattura, commercialista...", key="filtro_desc_report")
     
-    # Costruiamo la query in base ai filtri
     query_parts = []
     
     # Personale
@@ -995,7 +998,7 @@ def page_riepilogo():
             SELECT 'Personale' as Tipo, c.data, p.indirizzo as Cantiere, 
                    c.operaio || ' - ' || COALESCE(c.descrizione, '') as Descrizione, c.totale as Importo
             FROM costo_manodopera c JOIN preventivi p ON c.cantiere_id = p.id
-            WHERE 1=1
+            WHERE c.data >= '{data_inizio_report}' AND c.data <= '{data_fine_report}'
         """
         if filtro_cantiere != "Tutti i cantieri":
             cid = filtro_cantiere.split(" - ")[0]
@@ -1010,7 +1013,7 @@ def page_riepilogo():
             SELECT 'Materiale' as Tipo, c.data, p.indirizzo as Cantiere, 
                    c.fornitore as Descrizione, c.imponibile as Importo
             FROM costo_materiali c JOIN preventivi p ON c.cantiere_id = p.id
-            WHERE 1=1
+            WHERE c.data >= '{data_inizio_report}' AND c.data <= '{data_fine_report}'
         """
         if filtro_cantiere != "Tutti i cantieri":
             cid = filtro_cantiere.split(" - ")[0]
@@ -1025,7 +1028,7 @@ def page_riepilogo():
             SELECT 'Amministrativo' as Tipo, data, 'Spese Generali' as Cantiere, 
                    descrizione as Descrizione, importo as Importo
             FROM costo_amministrativo
-            WHERE 1=1
+            WHERE data >= '{data_inizio_report}' AND data <= '{data_fine_report}'
         """
         if filtro_descrizione:
             q_a += f" AND descrizione LIKE '%{filtro_descrizione}%'"
@@ -1038,21 +1041,17 @@ def page_riepilogo():
         if df_report.empty:
             st.info("Nessun costo trovato con i filtri selezionati.")
         else:
-            # Calcoliamo il totale
             totale_importo = df_report['Importo'].sum()
             
-            # Aggiungiamo la riga del totale
             df_report['Data'] = df_report['data'].apply(formatta_data_italiana)
             df_visual = df_report[['Tipo', 'Data', 'Cantiere', 'Descrizione', 'Importo']].copy()
             df_visual['Importo'] = df_visual['Importo'].apply(lambda x: f"€ {x:,.2f}")
             
-            # Aggiungiamo riga totale
             riga_totale = pd.DataFrame([{'Tipo': '', 'Data': '', 'Cantiere': '', 'Descrizione': 'TOTALE', 'Importo': f"€ {totale_importo:,.2f}"}])
             df_visual = pd.concat([df_visual, riga_totale], ignore_index=True)
             
             st.dataframe(df_visual, use_container_width=True)
             
-            # Pulsante PDF per questo report
             if st.button("📄 Esporta Report in PDF", type="primary", key="btn_export_report_dettagliato"):
                 try:
                     from reportlab.lib.pagesizes import A4, landscape
@@ -1066,7 +1065,10 @@ def page_riepilogo():
                     elements = []
                     styles = getSampleStyleSheet()
                     
-                    elements.append(Paragraph(f"Report Costi Dettagliato - {filtro_tipo_costo} - {filtro_cantiere}", styles['Title']))
+                    data_inizio_it = formatta_data_italiana(data_inizio_report)
+                    data_fine_it = formatta_data_italiana(data_fine_report)
+                    
+                    elements.append(Paragraph(f"Report Costi dal {data_inizio_it} al {data_fine_it} - {filtro_tipo_costo} - {filtro_cantiere}", styles['Title']))
                     elements.append(Spacer(1, 12))
                     
                     data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Importo (€)"]]
