@@ -989,6 +989,7 @@ def page_riepilogo():
     
     query_parts = []
     
+    # Personale
     if filtro_tipo_costo in ["Tutti", "Personale"]:
         q_p = f"""
             SELECT 'Personale' as Tipo, c.data, p.indirizzo as Cantiere, 
@@ -1003,6 +1004,7 @@ def page_riepilogo():
             q_p += f" AND (c.operaio LIKE '%{filtro_descrizione}%' OR c.descrizione LIKE '%{filtro_descrizione}%')"
         query_parts.append(q_p)
 
+    # Materiali
     if filtro_tipo_costo in ["Tutti", "Materiale"]:
         q_m = f"""
             SELECT 'Materiale' as Tipo, c.data, p.indirizzo as Cantiere, 
@@ -1017,6 +1019,7 @@ def page_riepilogo():
             q_m += f" AND c.fornitore LIKE '%{filtro_descrizione}%'"
         query_parts.append(q_m)
 
+    # Amministrativi
     if filtro_tipo_costo in ["Tutti", "Amministrativo"]:
         q_a = f"""
             SELECT 'Amministrativo' as Tipo, data, 'Spese Generali' as Cantiere, 
