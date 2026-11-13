@@ -42,7 +42,13 @@ def init_db():
             stato TEXT DEFAULT 'Attivo'
         )
     """)
-    c.execute("CREATE TABLE IF NOT EXISTS operai (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, ruolo TEXT, costo_orario REAL)")
+    # Tabella operai con colonna "tipo"
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS operai (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, 
+            nome TEXT, ruolo TEXT, costo_orario REAL, tipo TEXT DEFAULT 'Interno'
+        )
+    """)
     c.execute("CREATE TABLE IF NOT EXISTS fornitori (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, piva TEXT, contatto TEXT)")
     c.execute("""
         CREATE TABLE IF NOT EXISTS costo_manodopera (
@@ -55,6 +61,7 @@ def init_db():
     c.execute("CREATE TABLE IF NOT EXISTS categorie_amministrative (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT UNIQUE)")
     c.execute("CREATE TABLE IF NOT EXISTS incassi (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, fattura TEXT, imponibile REAL, iva REAL, totale REAL)")
     
+    # Aggiornamento automatico per database vecchi
     try:
         c.execute("ALTER TABLE preventivi ADD COLUMN stato TEXT DEFAULT 'Attivo'")
     except sqlite3.OperationalError:
@@ -62,6 +69,11 @@ def init_db():
     
     try:
         c.execute("ALTER TABLE costo_manodopera ADD COLUMN descrizione TEXT")
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        c.execute("ALTER TABLE operai ADD COLUMN tipo TEXT DEFAULT 'Interno'")
     except sqlite3.OperationalError:
         pass
     
@@ -285,21 +297,34 @@ def page_anagrafiche():
     tab1, tab2, tab3 = st.tabs(["Operai", "Fornitori", "Categorie Amministrative"])
     
     with tab1:
+        # Filtro tipo per visualizzare
+        filtro_tipo_operaio = st.radio("Filtra per tipo:", ["Tutti", "Interno", "Esterno"], horizontal=True, key="filtro_tipo_operaio")
+        
         with st.expander("➕ Nuovo Operaio"):
             with st.form("nuovo_operaio", clear_on_submit=True):
                 nome = st.text_input("Nome Operaio")
                 ruolo = st.text_input("Ruolo")
+                tipo = st.selectbox("Tipo", ["Interno", "Esterno"])
                 costo = st.number_input("Costo Orario (€)", min_value=0.0, step=1.0)
                 if st.form_submit_button("Salva Operaio"):
                     if nome:
                         conn = get_connection(); c = conn.cursor()
-                        c.execute("INSERT INTO operai (nome, ruolo, costo_orario) VALUES (?,?,?)", (nome, ruolo, costo))
+                        c.execute("INSERT INTO operai (nome, ruolo, costo_orario, tipo) VALUES (?,?,?,?)", (nome, ruolo, costo, tipo))
                         conn.commit(); conn.close(); st.success("Operaio aggiunto!"); st.rerun()
         
         conn = get_connection()
-        df_op = pd.read_sql_query("SELECT * FROM operai", conn)
+        if filtro_tipo_operaio == "Tutti":
+            df_op = pd.read_sql_query("SELECT * FROM operai", conn)
+        else:
+            df_op = pd.read_sql_query(f"SELECT * FROM operai WHERE tipo = '{filtro_tipo_operaio}'", conn)
         conn.close()
-        st.dataframe(df_op, use_container_width=True)
+        
+        # Rinominiamo le colonne per la visualizzazione
+        if not df_op.empty:
+            df_op_visual = df_op.rename(columns={'id': 'ID', 'nome': 'Nome', 'ruolo': 'Ruolo', 'costo_orario': 'Costo Orario', 'tipo': 'Tipo'})
+            st.dataframe(df_op_visual, use_container_width=True)
+        else:
+            st.info("Nessun operaio trovato per questo filtro.")
         
         if not df_op.empty:
             st.subheader("Gestisci Operaio")
@@ -309,11 +334,13 @@ def page_anagrafiche():
             col1, col2 = st.columns(2)
             with col1:
                 with st.form("modifica_operaio"):
+                    new_nome = st.text_input("Nome", value=op_data['nome'])
                     new_ruolo = st.text_input("Ruolo", value=op_data['ruolo'])
+                    new_tipo = st.selectbox("Tipo", ["Interno", "Esterno"], index=0 if op_data['tipo'] == "Interno" else 1)
                     new_costo = st.number_input("Costo Orario (€)", value=float(op_data['costo_orario']))
                     if st.form_submit_button("Salva Modifiche"):
                         conn = get_connection(); c = conn.cursor()
-                        c.execute("UPDATE operai SET ruolo=?, costo_orario=? WHERE nome=?", (new_ruolo, new_costo, op_sel))
+                        c.execute("UPDATE operai SET nome=?, ruolo=?, costo_orario=?, tipo=? WHERE nome=?", (new_nome, new_ruolo, new_costo, new_tipo, op_sel))
                         conn.commit(); conn.close(); st.success("Modifiche salvate!"); st.rerun()
             with col2:
                 if st.button("Elimina Operaio", type="primary", key="btn_elimina_operaio"):
@@ -491,7 +518,14 @@ def page_costi():
         
         if not operai.empty:
             col3, col4 = st.columns(2)
-            operaio_sel = col3.selectbox("Operaio", operai['nome'].tolist(), key="op_manodopera")
+            
+            # Mostriamo "Nome (Tipo)" nel menu a tendina
+            operai_options = [f"{row['nome']} ({row['tipo']})" for _, row in operai.iterrows()]
+            operaio_sel_str = col3.selectbox("Operaio", operai_options, key="op_manodopera")
+            
+            # Estraiamo il nome pulito per il database
+            operaio_sel = operaio_sel_str.split(" (")[0]
+            
             costo_standard = operai[operai['nome'] == operaio_sel]['costo_orario'].values[0]
             
             costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=float(costo_standard), key="costo_orario")
@@ -809,14 +843,7 @@ def page_costi():
                 elements = []
                 styles = getSampleStyleSheet()
                 
-                # Stile per il testo nelle celle (per andare a capo)
-                style_cell = ParagraphStyle(
-                    'cell_style',
-                    parent=styles['Normal'],
-                    fontSize=8,
-                    leading=10,
-                    alignment=0
-                )
+                style_cell = ParagraphStyle('cell_style', parent=styles['Normal'], fontSize=8, leading=10, alignment=0)
 
                 data_inizio_it = formatta_data_italiana(data_inizio)
                 data_fine_it = formatta_data_italiana(data_fine)
@@ -841,7 +868,6 @@ def page_costi():
                 
                 data_rows.append(["", "", "", "TOTALE GENERALE", f"€ {totale_filtrato:,.2f}"])
                 
-                # Colonne bilanciate
                 t = Table(data_rows, colWidths=[80, 70, 180, 200, 80], repeatRows=1)
                 t.setStyle(TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
@@ -1049,7 +1075,6 @@ def page_riepilogo():
     if dfs:
         df_report = pd.concat(dfs, ignore_index=True)
         
-        # --- ORDINAMENTO CRONOLOGICO ---
         df_report['data'] = pd.to_datetime(df_report['data'])
         df_report = df_report.sort_values(by='data', ascending=False)
         
@@ -1074,13 +1099,7 @@ def page_riepilogo():
                     elements = []
                     styles = getSampleStyleSheet()
                     
-                    style_cell = ParagraphStyle(
-                        'cell_style',
-                        parent=styles['Normal'],
-                        fontSize=8,
-                        leading=10,
-                        alignment=0
-                    )
+                    style_cell = ParagraphStyle('cell_style', parent=styles['Normal'], fontSize=8, leading=10, alignment=0)
 
                     data_inizio_it = formatta_data_italiana(data_inizio_report)
                     data_fine_it = formatta_data_italiana(data_fine_report)
@@ -1088,7 +1107,6 @@ def page_riepilogo():
                     elements.append(Paragraph(f"Report Costi dal {data_inizio_it} al {data_fine_it} - {filtro_tipo_costo} - {filtro_cantiere}", styles['Title']))
                     elements.append(Spacer(1, 12))
                     
-                    # Se il filtro è "Personale + Materiale", gestiamo la doppia tabella
                     if filtro_tipo_costo == "Personale + Materiale":
                         df_pers = df_report[df_report['Tipo'] == 'Personale']
                         df_mat = df_report[df_report['Tipo'] == 'Materiale']
