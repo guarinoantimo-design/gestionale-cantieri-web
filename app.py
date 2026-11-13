@@ -1172,7 +1172,22 @@ def page_riepilogo():
                         elements.append(Spacer(1, 20))
                         return tot
 
-                    if filtro_tipo_costo == "Personale + Materiale":
+                    # Logica di stampa in base al filtro
+                    if filtro_tipo_costo == "Tutti":
+                        df_int = df_report[df_report['Tipo'] == 'Personale Interno']
+                        df_est = df_report[df_report['Tipo'] == 'Personale Esterno']
+                        df_mat = df_report[df_report['Tipo'] == 'Materiale']
+                        df_amm = df_report[df_report['Tipo'] == 'Amministrativo']
+                        
+                        tot_int = crea_tabella_pdf(df_int, "1. Costi Personale Interno", "#2C3E50")
+                        tot_est = crea_tabella_pdf(df_est, "2. Costi Personale Esterno", "#2C3E50")
+                        tot_mat = crea_tabella_pdf(df_mat, "3. Costi Materiali", "#2C3E50")
+                        tot_amm = crea_tabella_pdf(df_amm, "4. Costi Amministrativi", "#2C3E50")
+                        
+                        totale_complessivo = tot_int + tot_est + tot_mat + tot_amm
+                        elements.append(Paragraph(f"<b>TOTALE GENERALE ASSOLUTO: € {totale_complessivo:,.2f}</b>", styles['Heading1']))
+                    
+                    elif filtro_tipo_costo == "Personale + Materiale":
                         df_int = df_report[df_report['Tipo'] == 'Personale Interno']
                         df_est = df_report[df_report['Tipo'] == 'Personale Esterno']
                         df_mat = df_report[df_report['Tipo'] == 'Materiale']
@@ -1182,7 +1197,7 @@ def page_riepilogo():
                         tot_mat = crea_tabella_pdf(df_mat, "3. Costi Materiali", "#2C3E50")
                         
                         totale_complessivo = tot_int + tot_est + tot_mat
-                        elements.append(Paragraph(f"<b>TOTALE GENERALE ASSOLUTO: € {totale_complessivo:,.2f}</b>", styles['Heading1']))
+                        elements.append(Paragraph(f"<b>TOTALE GENERALE ASSOLUTO (Personale + Materiale): € {totale_complessivo:,.2f}</b>", styles['Heading1']))
                     
                     elif filtro_tipo_costo == "Personale (Tutti)":
                         df_int = df_report[df_report['Tipo'] == 'Personale Interno']
@@ -1195,7 +1210,6 @@ def page_riepilogo():
                         elements.append(Paragraph(f"<b>TOTALE GENERALE PERSONALE: € {totale_complessivo:,.2f}</b>", styles['Heading1']))
 
                     else:
-                        # Tabella unica per gli altri filtri
                         crea_tabella_pdf(df_report, "Dettaglio Costi", "#2C3E50")
                         elements.append(Paragraph(f"<b>TOTALE GENERALE: € {totale_importo:,.2f}</b>", styles['Heading1']))
                     
