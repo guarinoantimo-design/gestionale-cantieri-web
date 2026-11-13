@@ -42,7 +42,6 @@ def init_db():
             stato TEXT DEFAULT 'Attivo'
         )
     """)
-    # Tabella operai con colonna "tipo"
     c.execute("""
         CREATE TABLE IF NOT EXISTS operai (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -61,7 +60,6 @@ def init_db():
     c.execute("CREATE TABLE IF NOT EXISTS categorie_amministrative (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT UNIQUE)")
     c.execute("CREATE TABLE IF NOT EXISTS incassi (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, cantiere_id INTEGER, fattura TEXT, imponibile REAL, iva REAL, totale REAL)")
     
-    # Aggiornamento automatico per database vecchi
     try:
         c.execute("ALTER TABLE preventivi ADD COLUMN stato TEXT DEFAULT 'Attivo'")
     except sqlite3.OperationalError:
@@ -519,11 +517,9 @@ def page_costi():
         if not operai.empty:
             col3, col4 = st.columns(2)
             
-            # Mostriamo "Nome (Tipo)" nel menu a tendina
             operai_options = [f"{row['nome']} ({row['tipo']})" for _, row in operai.iterrows()]
             operaio_sel_str = col3.selectbox("Operaio", operai_options, key="op_manodopera")
             
-            # Estraiamo il nome pulito per il database
             operaio_sel = operaio_sel_str.split(" (")[0]
             
             costo_standard = operai[operai['nome'] == operaio_sel]['costo_orario'].values[0]
@@ -768,16 +764,26 @@ def page_costi():
     with st.expander("🔍 Filtra i costi", expanded=True):
         col_f1, col_f2, col_f3, col_f4 = st.columns(4)
         filtro_testo = col_f1.text_input("Cerca (Operaio/Fornitore/Cantiere)", placeholder="Scrivi qui...")
-        filtro_tipo = col_f2.selectbox("Tipo di costo", ["Tutti", "Personale", "Materiale", "Amministrativo"])
+        filtro_tipo = col_f2.selectbox("Tipo di costo", ["Tutti", "Personale Interno", "Personale Esterno", "Personale (Tutti)", "Materiale", "Amministrativo"])
         data_inizio = col_f3.date_input("Dal", value=datetime.date.today().replace(month=1, day=1), format="DD/MM/YYYY")
         data_fine = col_f4.date_input("Al", value=datetime.date.today(), format="DD/MM/YYYY")
     
-    query_pers = f"""
-        SELECT 'M-' || id as ID_Unico, 'Personale' as Tipo, data, 
+    # Query base con distinzione per tipo
+    query_pers_int = f"""
+        SELECT 'M-' || id as ID_Unico, 'Personale Interno' as Tipo, data, 
                (SELECT indirizzo FROM preventivi WHERE id = cantiere_id) as Cantiere, 
                operaio || ' - ' || COALESCE(descrizione, '') as Descrizione, totale as Totale
         FROM costo_manodopera
         WHERE data >= '{data_inizio}' AND data <= '{data_fine}'
+        AND operaio IN (SELECT nome FROM operai WHERE tipo = 'Interno')
+    """
+    query_pers_est = f"""
+        SELECT 'M-' || id as ID_Unico, 'Personale Esterno' as Tipo, data, 
+               (SELECT indirizzo FROM preventivi WHERE id = cantiere_id) as Cantiere, 
+               operaio || ' - ' || COALESCE(descrizione, '') as Descrizione, totale as Totale
+        FROM costo_manodopera
+        WHERE data >= '{data_inizio}' AND data <= '{data_fine}'
+        AND operaio IN (SELECT nome FROM operai WHERE tipo = 'Esterno')
     """
     query_mat = f"""
         SELECT 'Mat-' || id as ID_Unico, 'Materiale' as Tipo, data, 
@@ -794,14 +800,18 @@ def page_costi():
         WHERE data >= '{data_inizio}' AND data <= '{data_fine}'
     """
     
-    if filtro_tipo == "Personale":
-        query = query_pers
+    if filtro_tipo == "Personale Interno":
+        query = query_pers_int
+    elif filtro_tipo == "Personale Esterno":
+        query = query_pers_est
+    elif filtro_tipo == "Personale (Tutti)":
+        query = query_pers_int + " UNION ALL " + query_pers_est
     elif filtro_tipo == "Materiale":
         query = query_mat
     elif filtro_tipo == "Amministrativo":
         query = query_amm
     else:
-        query = query_pers + " UNION ALL " + query_mat + " UNION ALL " + query_amm
+        query = query_pers_int + " UNION ALL " + query_pers_est + " UNION ALL " + query_mat + " UNION ALL " + query_amm
     
     query += " ORDER BY data DESC"
     
