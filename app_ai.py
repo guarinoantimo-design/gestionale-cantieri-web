@@ -42,7 +42,12 @@ def init_db():
             stato TEXT DEFAULT 'Attivo'
         )
     """)
-    c.execute("CREATE TABLE IF NOT EXISTS operai (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, ruolo TEXT, costo_orario REAL)")
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS operai (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, 
+            nome TEXT, ruolo TEXT, costo_orario REAL, tipo TEXT DEFAULT 'Interno'
+        )
+    """)
     c.execute("CREATE TABLE IF NOT EXISTS fornitori (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, piva TEXT, contatto TEXT)")
     c.execute("""
         CREATE TABLE IF NOT EXISTS costo_manodopera (
@@ -62,6 +67,11 @@ def init_db():
     
     try:
         c.execute("ALTER TABLE costo_manodopera ADD COLUMN descrizione TEXT")
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        c.execute("ALTER TABLE operai ADD COLUMN tipo TEXT DEFAULT 'Interno'")
     except sqlite3.OperationalError:
         pass
     
@@ -285,21 +295,32 @@ def page_anagrafiche():
     tab1, tab2, tab3 = st.tabs(["Operai", "Fornitori", "Categorie Amministrative"])
     
     with tab1:
+        filtro_tipo_operaio = st.radio("Filtra per tipo:", ["Tutti", "Interno", "Esterno"], horizontal=True, key="filtro_tipo_operaio")
+        
         with st.expander("➕ Nuovo Operaio"):
             with st.form("nuovo_operaio", clear_on_submit=True):
                 nome = st.text_input("Nome Operaio")
                 ruolo = st.text_input("Ruolo")
+                tipo = st.selectbox("Tipo", ["Interno", "Esterno"])
                 costo = st.number_input("Costo Orario (€)", min_value=0.0, step=1.0)
                 if st.form_submit_button("Salva Operaio"):
                     if nome:
                         conn = get_connection(); c = conn.cursor()
-                        c.execute("INSERT INTO operai (nome, ruolo, costo_orario) VALUES (?,?,?)", (nome, ruolo, costo))
+                        c.execute("INSERT INTO operai (nome, ruolo, costo_orario, tipo) VALUES (?,?,?,?)", (nome, ruolo, costo, tipo))
                         conn.commit(); conn.close(); st.success("Operaio aggiunto!"); st.rerun()
         
         conn = get_connection()
-        df_op = pd.read_sql_query("SELECT * FROM operai", conn)
+        if filtro_tipo_operaio == "Tutti":
+            df_op = pd.read_sql_query("SELECT * FROM operai", conn)
+        else:
+            df_op = pd.read_sql_query(f"SELECT * FROM operai WHERE tipo = '{filtro_tipo_operaio}'", conn)
         conn.close()
-        st.dataframe(df_op, use_container_width=True)
+        
+        if not df_op.empty:
+            df_op_visual = df_op.rename(columns={'id': 'ID', 'nome': 'Nome', 'ruolo': 'Ruolo', 'costo_orario': 'Costo Orario', 'tipo': 'Tipo'})
+            st.dataframe(df_op_visual, use_container_width=True)
+        else:
+            st.info("Nessun operaio trovato per questo filtro.")
         
         if not df_op.empty:
             st.subheader("Gestisci Operaio")
@@ -309,11 +330,13 @@ def page_anagrafiche():
             col1, col2 = st.columns(2)
             with col1:
                 with st.form("modifica_operaio"):
+                    new_nome = st.text_input("Nome", value=op_data['nome'])
                     new_ruolo = st.text_input("Ruolo", value=op_data['ruolo'])
+                    new_tipo = st.selectbox("Tipo", ["Interno", "Esterno"], index=0 if op_data['tipo'] == "Interno" else 1)
                     new_costo = st.number_input("Costo Orario (€)", value=float(op_data['costo_orario']))
                     if st.form_submit_button("Salva Modifiche"):
                         conn = get_connection(); c = conn.cursor()
-                        c.execute("UPDATE operai SET ruolo=?, costo_orario=? WHERE nome=?", (new_ruolo, new_costo, op_sel))
+                        c.execute("UPDATE operai SET nome=?, ruolo=?, costo_orario=?, tipo=? WHERE nome=?", (new_nome, new_ruolo, new_costo, new_tipo, op_sel))
                         conn.commit(); conn.close(); st.success("Modifiche salvate!"); st.rerun()
             with col2:
                 if st.button("Elimina Operaio", type="primary", key="btn_elimina_operaio"):
@@ -491,7 +514,12 @@ def page_costi():
         
         if not operai.empty:
             col3, col4 = st.columns(2)
-            operaio_sel = col3.selectbox("Operaio", operai['nome'].tolist(), key="op_manodopera")
+            
+            operai_options = [f"{row['nome']} ({row['tipo']})" for _, row in operai.iterrows()]
+            operaio_sel_str = col3.selectbox("Operaio", operai_options, key="op_manodopera")
+            
+            operaio_sel = operaio_sel_str.split(" (")[0]
+            
             costo_standard = operai[operai['nome'] == operaio_sel]['costo_orario'].values[0]
             
             costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=float(costo_standard), key="costo_orario")
@@ -734,16 +762,25 @@ def page_costi():
     with st.expander("🔍 Filtra i costi", expanded=True):
         col_f1, col_f2, col_f3, col_f4 = st.columns(4)
         filtro_testo = col_f1.text_input("Cerca (Operaio/Fornitore/Cantiere)", placeholder="Scrivi qui...")
-        filtro_tipo = col_f2.selectbox("Tipo di costo", ["Tutti", "Personale", "Materiale", "Amministrativo"])
+        filtro_tipo = col_f2.selectbox("Tipo di costo", ["Tutti", "Personale Interno", "Personale Esterno", "Personale (Tutti)", "Materiale", "Amministrativo"])
         data_inizio = col_f3.date_input("Dal", value=datetime.date.today().replace(month=1, day=1), format="DD/MM/YYYY")
         data_fine = col_f4.date_input("Al", value=datetime.date.today(), format="DD/MM/YYYY")
     
-    query_pers = f"""
-        SELECT 'M-' || id as ID_Unico, 'Personale' as Tipo, data, 
+    query_pers_int = f"""
+        SELECT 'M-' || id as ID_Unico, 'Personale Interno' as Tipo, data, 
                (SELECT indirizzo FROM preventivi WHERE id = cantiere_id) as Cantiere, 
                operaio || ' - ' || COALESCE(descrizione, '') as Descrizione, totale as Totale
         FROM costo_manodopera
         WHERE data >= '{data_inizio}' AND data <= '{data_fine}'
+        AND operaio IN (SELECT nome FROM operai WHERE tipo = 'Interno')
+    """
+    query_pers_est = f"""
+        SELECT 'M-' || id as ID_Unico, 'Personale Esterno' as Tipo, data, 
+               (SELECT indirizzo FROM preventivi WHERE id = cantiere_id) as Cantiere, 
+               operaio || ' - ' || COALESCE(descrizione, '') as Descrizione, totale as Totale
+        FROM costo_manodopera
+        WHERE data >= '{data_inizio}' AND data <= '{data_fine}'
+        AND operaio IN (SELECT nome FROM operai WHERE tipo = 'Esterno')
     """
     query_mat = f"""
         SELECT 'Mat-' || id as ID_Unico, 'Materiale' as Tipo, data, 
@@ -760,14 +797,18 @@ def page_costi():
         WHERE data >= '{data_inizio}' AND data <= '{data_fine}'
     """
     
-    if filtro_tipo == "Personale":
-        query = query_pers
+    if filtro_tipo == "Personale Interno":
+        query = query_pers_int
+    elif filtro_tipo == "Personale Esterno":
+        query = query_pers_est
+    elif filtro_tipo == "Personale (Tutti)":
+        query = query_pers_int + " UNION ALL " + query_pers_est
     elif filtro_tipo == "Materiale":
         query = query_mat
     elif filtro_tipo == "Amministrativo":
         query = query_amm
     else:
-        query = query_pers + " UNION ALL " + query_mat + " UNION ALL " + query_amm
+        query = query_pers_int + " UNION ALL " + query_pers_est + " UNION ALL " + query_mat + " UNION ALL " + query_amm
     
     query += " ORDER BY data DESC"
     
@@ -809,14 +850,7 @@ def page_costi():
                 elements = []
                 styles = getSampleStyleSheet()
                 
-                # Stile per il testo nelle celle (per andare a capo)
-                style_cell = ParagraphStyle(
-                    'cell_style',
-                    parent=styles['Normal'],
-                    fontSize=8,
-                    leading=10,
-                    alignment=0
-                )
+                style_cell = ParagraphStyle('cell_style', parent=styles['Normal'], fontSize=8, leading=10, alignment=0)
 
                 data_inizio_it = formatta_data_italiana(data_inizio)
                 data_fine_it = formatta_data_italiana(data_fine)
@@ -841,7 +875,6 @@ def page_costi():
                 
                 data_rows.append(["", "", "", "TOTALE GENERALE", f"€ {totale_filtrato:,.2f}"])
                 
-                # Colonne bilanciate
                 t = Table(data_rows, colWidths=[80, 70, 180, 200, 80], repeatRows=1)
                 t.setStyle(TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
@@ -1001,26 +1034,49 @@ def page_riepilogo():
     opzioni_cantieri = ["Tutti i cantieri"] + [f"{row['id']} - {row['indirizzo']}" for _, row in cantieri.iterrows()]
     filtro_cantiere = col_r1.selectbox("Seleziona Cantiere", opzioni_cantieri, key="filtro_cantiere_report")
     
-    filtro_tipo_costo = col_r2.selectbox("Tipo di Costo", ["Tutti", "Personale", "Materiale", "Amministrativo", "Personale + Materiale"], key="filtro_tipo_report")
+    filtro_tipo_costo = col_r2.selectbox(
+        "Tipo di Costo", 
+        ["Tutti", "Personale Interno", "Personale Esterno", "Personale (Tutti)", "Materiale", "Amministrativo", "Personale + Materiale"], 
+        key="filtro_tipo_report"
+    )
     
     filtro_descrizione = col_r3.text_input("Cerca nella Descrizione", placeholder="Es. massetto, fattura, commercialista...", key="filtro_desc_report")
     
     dfs = []
     
-    if filtro_tipo_costo in ["Tutti", "Personale", "Personale + Materiale"]:
-        q_p = f"""
-            SELECT 'Personale' as Tipo, c.data, p.indirizzo as Cantiere, 
+    # 1. Personale Interno
+    if filtro_tipo_costo in ["Tutti", "Personale Interno", "Personale (Tutti)", "Personale + Materiale"]:
+        q_p_int = f"""
+            SELECT 'Personale Interno' as Tipo, c.data, p.indirizzo as Cantiere, 
                    c.operaio || ' - ' || COALESCE(c.descrizione, '') as Descrizione, c.totale as Importo
             FROM costo_manodopera c JOIN preventivi p ON c.cantiere_id = p.id
             WHERE c.data >= '{data_inizio_report}' AND c.data <= '{data_fine_report}'
+            AND c.operaio IN (SELECT nome FROM operai WHERE tipo = 'Interno')
         """
         if filtro_cantiere != "Tutti i cantieri":
             cid = filtro_cantiere.split(" - ")[0]
-            q_p += f" AND c.cantiere_id = {cid}"
+            q_p_int += f" AND c.cantiere_id = {cid}"
         if filtro_descrizione:
-            q_p += f" AND (c.operaio LIKE '%{filtro_descrizione}%' OR c.descrizione LIKE '%{filtro_descrizione}%')"
-        dfs.append(pd.read_sql_query(q_p, conn))
+            q_p_int += f" AND (c.operaio LIKE '%{filtro_descrizione}%' OR c.descrizione LIKE '%{filtro_descrizione}%')"
+        dfs.append(pd.read_sql_query(q_p_int, conn))
 
+    # 2. Personale Esterno
+    if filtro_tipo_costo in ["Tutti", "Personale Esterno", "Personale (Tutti)", "Personale + Materiale"]:
+        q_p_est = f"""
+            SELECT 'Personale Esterno' as Tipo, c.data, p.indirizzo as Cantiere, 
+                   c.operaio || ' - ' || COALESCE(c.descrizione, '') as Descrizione, c.totale as Importo
+            FROM costo_manodopera c JOIN preventivi p ON c.cantiere_id = p.id
+            WHERE c.data >= '{data_inizio_report}' AND c.data <= '{data_fine_report}'
+            AND c.operaio IN (SELECT nome FROM operai WHERE tipo = 'Esterno')
+        """
+        if filtro_cantiere != "Tutti i cantieri":
+            cid = filtro_cantiere.split(" - ")[0]
+            q_p_est += f" AND c.cantiere_id = {cid}"
+        if filtro_descrizione:
+            q_p_est += f" AND (c.operaio LIKE '%{filtro_descrizione}%' OR c.descrizione LIKE '%{filtro_descrizione}%')"
+        dfs.append(pd.read_sql_query(q_p_est, conn))
+
+    # 3. Materiale
     if filtro_tipo_costo in ["Tutti", "Materiale", "Personale + Materiale"]:
         q_m = f"""
             SELECT 'Materiale' as Tipo, c.data, p.indirizzo as Cantiere, 
@@ -1035,6 +1091,7 @@ def page_riepilogo():
             q_m += f" AND c.fornitore LIKE '%{filtro_descrizione}%'"
         dfs.append(pd.read_sql_query(q_m, conn))
 
+    # 4. Amministrativo
     if filtro_tipo_costo in ["Tutti", "Amministrativo"]:
         q_a = f"""
             SELECT 'Amministrativo' as Tipo, data, 'Spese Generali' as Cantiere, 
@@ -1049,7 +1106,6 @@ def page_riepilogo():
     if dfs:
         df_report = pd.concat(dfs, ignore_index=True)
         
-        # --- ORDINAMENTO CRONOLOGICO ---
         df_report['data'] = pd.to_datetime(df_report['data'])
         df_report = df_report.sort_values(by='data', ascending=False)
         
@@ -1074,13 +1130,7 @@ def page_riepilogo():
                     elements = []
                     styles = getSampleStyleSheet()
                     
-                    style_cell = ParagraphStyle(
-                        'cell_style',
-                        parent=styles['Normal'],
-                        fontSize=8,
-                        leading=10,
-                        alignment=0
-                    )
+                    style_cell = ParagraphStyle('cell_style', parent=styles['Normal'], fontSize=8, leading=10, alignment=0)
 
                     data_inizio_it = formatta_data_italiana(data_inizio_report)
                     data_fine_it = formatta_data_italiana(data_fine_report)
@@ -1088,102 +1138,80 @@ def page_riepilogo():
                     elements.append(Paragraph(f"Report Costi dal {data_inizio_it} al {data_fine_it} - {filtro_tipo_costo} - {filtro_cantiere}", styles['Title']))
                     elements.append(Spacer(1, 12))
                     
-                    # Se il filtro è "Personale + Materiale", gestiamo la doppia tabella
-                    if filtro_tipo_costo == "Personale + Materiale":
-                        df_pers = df_report[df_report['Tipo'] == 'Personale']
+                    def crea_tabella_pdf(df_filtrato, titolo_tabella, colore_intestazione):
+                        tot = df_filtrato['Importo'].sum()
+                        elements.append(Paragraph(f"<b>{titolo_tabella}</b>", styles['Heading2']))
+                        elements.append(Spacer(1, 5))
+                        
+                        if not df_filtrato.empty:
+                            data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Importo (€)"]]
+                            for _, row in df_filtrato.iterrows():
+                                data_rows.append([
+                                    row['Tipo'], 
+                                    row['data'].strftime('%d/%m/%Y'), 
+                                    Paragraph(row['Cantiere'], style_cell), 
+                                    Paragraph(row['Descrizione'], style_cell), 
+                                    f"{row['Importo']:,.2f}"
+                                ])
+                            data_rows.append(["", "", "", f"TOTALE {titolo_tabella.upper()}", f"€ {tot:,.2f}"])
+                            
+                            t = Table(data_rows, colWidths=[80, 70, 180, 200, 80], repeatRows=1)
+                            t.setStyle(TableStyle([
+                                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor(colore_intestazione)),
+                                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                                ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#F4F6F7")),
+                                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#BDC3C7")),
+                                ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                            ]))
+                            elements.append(t)
+                        else:
+                            elements.append(Paragraph("Nessun dato nel periodo selezionato.", styles['Normal']))
+                        
+                        elements.append(Spacer(1, 20))
+                        return tot
+
+                    # Logica di stampa in base al filtro
+                    if filtro_tipo_costo == "Tutti":
+                        df_int = df_report[df_report['Tipo'] == 'Personale Interno']
+                        df_est = df_report[df_report['Tipo'] == 'Personale Esterno']
+                        df_mat = df_report[df_report['Tipo'] == 'Materiale']
+                        df_amm = df_report[df_report['Tipo'] == 'Amministrativo']
+                        
+                        tot_int = crea_tabella_pdf(df_int, "1. Costi Personale Interno", "#2C3E50")
+                        tot_est = crea_tabella_pdf(df_est, "2. Costi Personale Esterno", "#2C3E50")
+                        tot_mat = crea_tabella_pdf(df_mat, "3. Costi Materiali", "#2C3E50")
+                        tot_amm = crea_tabella_pdf(df_amm, "4. Costi Amministrativi", "#2C3E50")
+                        
+                        totale_complessivo = tot_int + tot_est + tot_mat + tot_amm
+                        elements.append(Paragraph(f"<b>TOTALE GENERALE ASSOLUTO: € {totale_complessivo:,.2f}</b>", styles['Heading1']))
+                    
+                    elif filtro_tipo_costo == "Personale + Materiale":
+                        df_int = df_report[df_report['Tipo'] == 'Personale Interno']
+                        df_est = df_report[df_report['Tipo'] == 'Personale Esterno']
                         df_mat = df_report[df_report['Tipo'] == 'Materiale']
                         
-                        tot_pers = df_pers['Importo'].sum()
-                        elements.append(Paragraph(f"<b>1. Costi Personale</b>", styles['Heading2']))
-                        elements.append(Spacer(1, 5))
+                        tot_int = crea_tabella_pdf(df_int, "1. Costi Personale Interno", "#2C3E50")
+                        tot_est = crea_tabella_pdf(df_est, "2. Costi Personale Esterno", "#2C3E50")
+                        tot_mat = crea_tabella_pdf(df_mat, "3. Costi Materiali", "#2C3E50")
                         
-                        if not df_pers.empty:
-                            data_rows_p = [["Tipo", "Data", "Cantiere", "Descrizione", "Importo (€)"]]
-                            for _, row in df_pers.iterrows():
-                                data_rows_p.append([
-                                    row['Tipo'], 
-                                    row['data'].strftime('%d/%m/%Y'), 
-                                    Paragraph(row['Cantiere'], style_cell), 
-                                    Paragraph(row['Descrizione'], style_cell), 
-                                    f"{row['Importo']:,.2f}"
-                                ])
-                            data_rows_p.append(["", "", "", "TOTALE PERSONALE", f"€ {tot_pers:,.2f}"])
-                            
-                            t_p = Table(data_rows_p, colWidths=[80, 70, 180, 200, 80], repeatRows=1)
-                            t_p.setStyle(TableStyle([
-                                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#34495E")),
-                                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                                ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#F4F6F7")),
-                                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#BDC3C7")),
-                                ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
-                            ]))
-                            elements.append(t_p)
-                        else:
-                            elements.append(Paragraph("Nessun costo di personale nel periodo selezionato.", styles['Normal']))
-                        
-                        elements.append(Spacer(1, 20))
-                        
-                        tot_mat = df_mat['Importo'].sum()
-                        elements.append(Paragraph(f"<b>2. Costi Materiale</b>", styles['Heading2']))
-                        elements.append(Spacer(1, 5))
-                        
-                        if not df_mat.empty:
-                            data_rows_m = [["Tipo", "Data", "Cantiere", "Descrizione", "Importo (€)"]]
-                            for _, row in df_mat.iterrows():
-                                data_rows_m.append([
-                                    row['Tipo'], 
-                                    row['data'].strftime('%d/%m/%Y'), 
-                                    Paragraph(row['Cantiere'], style_cell), 
-                                    Paragraph(row['Descrizione'], style_cell), 
-                                    f"{row['Importo']:,.2f}"
-                                ])
-                            data_rows_m.append(["", "", "", "TOTALE MATERIALE", f"€ {tot_mat:,.2f}"])
-                            
-                            t_m = Table(data_rows_m, colWidths=[80, 70, 180, 200, 80], repeatRows=1)
-                            t_m.setStyle(TableStyle([
-                                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#34495E")),
-                                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                                ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#F4F6F7")),
-                                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#BDC3C7")),
-                                ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
-                            ]))
-                            elements.append(t_m)
-                        else:
-                            elements.append(Paragraph("Nessun costo di materiale nel periodo selezionato.", styles['Normal']))
-                        
-                        elements.append(Spacer(1, 20))
-                        
-                        totale_complessivo = tot_pers + tot_mat
-                        elements.append(Paragraph(f"<b>TOTALE GENERALE (Personale + Materiale): € {totale_complessivo:,.2f}</b>", styles['Heading2']))
+                        totale_complessivo = tot_int + tot_est + tot_mat
+                        elements.append(Paragraph(f"<b>TOTALE GENERALE ASSOLUTO (Personale + Materiale): € {totale_complessivo:,.2f}</b>", styles['Heading1']))
                     
-                    else:
-                        data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Importo (€)"]]
-                        for _, row in df_report.iterrows():
-                            data_rows.append([
-                                row['Tipo'], 
-                                row['data'].strftime('%d/%m/%Y'), 
-                                Paragraph(row['Cantiere'], style_cell), 
-                                Paragraph(row['Descrizione'], style_cell), 
-                                f"{row['Importo']:,.2f}"
-                            ])
-                        data_rows.append(["", "", "", "TOTALE", f"€ {totale_importo:,.2f}"])
+                    elif filtro_tipo_costo == "Personale (Tutti)":
+                        df_int = df_report[df_report['Tipo'] == 'Personale Interno']
+                        df_est = df_report[df_report['Tipo'] == 'Personale Esterno']
                         
-                        t = Table(data_rows, colWidths=[80, 70, 180, 200, 80], repeatRows=1)
-                        t.setStyle(TableStyle([
-                            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
-                            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                            ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#F4F6F7")),
-                            ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#BDC3C7")),
-                            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
-                        ]))
-                        elements.append(t)
+                        tot_int = crea_tabella_pdf(df_int, "1. Costi Personale Interno", "#34495E")
+                        tot_est = crea_tabella_pdf(df_est, "2. Costi Personale Esterno", "#34495E")
+                        
+                        totale_complessivo = tot_int + tot_est
+                        elements.append(Paragraph(f"<b>TOTALE GENERALE PERSONALE: € {totale_complessivo:,.2f}</b>", styles['Heading1']))
+
+                    else:
+                        crea_tabella_pdf(df_report, "Dettaglio Costi", "#2C3E50")
+                        elements.append(Paragraph(f"<b>TOTALE GENERALE: € {totale_importo:,.2f}</b>", styles['Heading1']))
                     
                     doc.build(elements)
                     st.success(f"PDF generato con successo: {filename}")
