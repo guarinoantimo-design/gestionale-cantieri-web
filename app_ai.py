@@ -841,7 +841,7 @@ def page_costi():
                 
                 data_rows.append(["", "", "", "TOTALE GENERALE", f"€ {totale_filtrato:,.2f}"])
                 
-                # Colonne bilanciate: Tipo(80) Data(70) Cantiere(180) Descrizione(200) Importo(80)
+                # Colonne bilanciate
                 t = Table(data_rows, colWidths=[80, 70, 180, 200, 80], repeatRows=1)
                 t.setStyle(TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
@@ -1001,13 +1001,13 @@ def page_riepilogo():
     opzioni_cantieri = ["Tutti i cantieri"] + [f"{row['id']} - {row['indirizzo']}" for _, row in cantieri.iterrows()]
     filtro_cantiere = col_r1.selectbox("Seleziona Cantiere", opzioni_cantieri, key="filtro_cantiere_report")
     
-    filtro_tipo_costo = col_r2.selectbox("Tipo di Costo", ["Tutti", "Personale", "Materiale", "Amministrativo"], key="filtro_tipo_report")
+    filtro_tipo_costo = col_r2.selectbox("Tipo di Costo", ["Tutti", "Personale", "Materiale", "Amministrativo", "Personale + Materiale"], key="filtro_tipo_report")
     
     filtro_descrizione = col_r3.text_input("Cerca nella Descrizione", placeholder="Es. massetto, fattura, commercialista...", key="filtro_desc_report")
     
     dfs = []
     
-    if filtro_tipo_costo in ["Tutti", "Personale"]:
+    if filtro_tipo_costo in ["Tutti", "Personale", "Personale + Materiale"]:
         q_p = f"""
             SELECT 'Personale' as Tipo, c.data, p.indirizzo as Cantiere, 
                    c.operaio || ' - ' || COALESCE(c.descrizione, '') as Descrizione, c.totale as Importo
@@ -1021,7 +1021,7 @@ def page_riepilogo():
             q_p += f" AND (c.operaio LIKE '%{filtro_descrizione}%' OR c.descrizione LIKE '%{filtro_descrizione}%')"
         dfs.append(pd.read_sql_query(q_p, conn))
 
-    if filtro_tipo_costo in ["Tutti", "Materiale"]:
+    if filtro_tipo_costo in ["Tutti", "Materiale", "Personale + Materiale"]:
         q_m = f"""
             SELECT 'Materiale' as Tipo, c.data, p.indirizzo as Cantiere, 
                    c.fornitore as Descrizione, c.imponibile as Importo
@@ -1049,12 +1049,16 @@ def page_riepilogo():
     if dfs:
         df_report = pd.concat(dfs, ignore_index=True)
         
+        # --- ORDINAMENTO CRONOLOGICO ---
+        df_report['data'] = pd.to_datetime(df_report['data'])
+        df_report = df_report.sort_values(by='data', ascending=False)
+        
         if df_report.empty:
             st.info("Nessun costo trovato con i filtri selezionati.")
         else:
             totale_importo = df_report['Importo'].sum()
             
-            df_report['Data'] = df_report['data'].apply(formatta_data_italiana)
+            df_report['Data'] = df_report['data'].apply(lambda x: x.strftime('%d/%m/%Y'))
             df_visual = df_report[['Tipo', 'Data', 'Cantiere', 'Descrizione', 'Importo']].copy()
             df_visual['Importo'] = df_visual['Importo'].apply(lambda x: f"€ {x:,.2f}")
             
@@ -1070,7 +1074,6 @@ def page_riepilogo():
                     elements = []
                     styles = getSampleStyleSheet()
                     
-                    # Stile per il testo nelle celle
                     style_cell = ParagraphStyle(
                         'cell_style',
                         parent=styles['Normal'],
@@ -1085,30 +1088,102 @@ def page_riepilogo():
                     elements.append(Paragraph(f"Report Costi dal {data_inizio_it} al {data_fine_it} - {filtro_tipo_costo} - {filtro_cantiere}", styles['Title']))
                     elements.append(Spacer(1, 12))
                     
-                    data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Importo (€)"]]
-                    for _, row in df_report.iterrows():
-                        data_rows.append([
-                            row['Tipo'], 
-                            formatta_data_italiana(row['data']), 
-                            Paragraph(row['Cantiere'], style_cell), 
-                            Paragraph(row['Descrizione'], style_cell), 
-                            f"{row['Importo']:,.2f}"
-                        ])
-                    data_rows.append(["", "", "", "TOTALE", f"€ {totale_importo:,.2f}"])
+                    # Se il filtro è "Personale + Materiale", gestiamo la doppia tabella
+                    if filtro_tipo_costo == "Personale + Materiale":
+                        df_pers = df_report[df_report['Tipo'] == 'Personale']
+                        df_mat = df_report[df_report['Tipo'] == 'Materiale']
+                        
+                        tot_pers = df_pers['Importo'].sum()
+                        elements.append(Paragraph(f"<b>1. Costi Personale</b>", styles['Heading2']))
+                        elements.append(Spacer(1, 5))
+                        
+                        if not df_pers.empty:
+                            data_rows_p = [["Tipo", "Data", "Cantiere", "Descrizione", "Importo (€)"]]
+                            for _, row in df_pers.iterrows():
+                                data_rows_p.append([
+                                    row['Tipo'], 
+                                    row['data'].strftime('%d/%m/%Y'), 
+                                    Paragraph(row['Cantiere'], style_cell), 
+                                    Paragraph(row['Descrizione'], style_cell), 
+                                    f"{row['Importo']:,.2f}"
+                                ])
+                            data_rows_p.append(["", "", "", "TOTALE PERSONALE", f"€ {tot_pers:,.2f}"])
+                            
+                            t_p = Table(data_rows_p, colWidths=[80, 70, 180, 200, 80], repeatRows=1)
+                            t_p.setStyle(TableStyle([
+                                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#34495E")),
+                                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                                ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#F4F6F7")),
+                                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#BDC3C7")),
+                                ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                            ]))
+                            elements.append(t_p)
+                        else:
+                            elements.append(Paragraph("Nessun costo di personale nel periodo selezionato.", styles['Normal']))
+                        
+                        elements.append(Spacer(1, 20))
+                        
+                        tot_mat = df_mat['Importo'].sum()
+                        elements.append(Paragraph(f"<b>2. Costi Materiale</b>", styles['Heading2']))
+                        elements.append(Spacer(1, 5))
+                        
+                        if not df_mat.empty:
+                            data_rows_m = [["Tipo", "Data", "Cantiere", "Descrizione", "Importo (€)"]]
+                            for _, row in df_mat.iterrows():
+                                data_rows_m.append([
+                                    row['Tipo'], 
+                                    row['data'].strftime('%d/%m/%Y'), 
+                                    Paragraph(row['Cantiere'], style_cell), 
+                                    Paragraph(row['Descrizione'], style_cell), 
+                                    f"{row['Importo']:,.2f}"
+                                ])
+                            data_rows_m.append(["", "", "", "TOTALE MATERIALE", f"€ {tot_mat:,.2f}"])
+                            
+                            t_m = Table(data_rows_m, colWidths=[80, 70, 180, 200, 80], repeatRows=1)
+                            t_m.setStyle(TableStyle([
+                                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#34495E")),
+                                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                                ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#F4F6F7")),
+                                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#BDC3C7")),
+                                ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                            ]))
+                            elements.append(t_m)
+                        else:
+                            elements.append(Paragraph("Nessun costo di materiale nel periodo selezionato.", styles['Normal']))
+                        
+                        elements.append(Spacer(1, 20))
+                        
+                        totale_complessivo = tot_pers + tot_mat
+                        elements.append(Paragraph(f"<b>TOTALE GENERALE (Personale + Materiale): € {totale_complessivo:,.2f}</b>", styles['Heading2']))
                     
-                    # Colonne bilanciate
-                    t = Table(data_rows, colWidths=[80, 70, 180, 200, 80], repeatRows=1)
-                    t.setStyle(TableStyle([
-                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
-                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                        ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#F4F6F7")),
-                        ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#BDC3C7")),
-                        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
-                    ]))
-                    elements.append(t)
+                    else:
+                        data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Importo (€)"]]
+                        for _, row in df_report.iterrows():
+                            data_rows.append([
+                                row['Tipo'], 
+                                row['data'].strftime('%d/%m/%Y'), 
+                                Paragraph(row['Cantiere'], style_cell), 
+                                Paragraph(row['Descrizione'], style_cell), 
+                                f"{row['Importo']:,.2f}"
+                            ])
+                        data_rows.append(["", "", "", "TOTALE", f"€ {totale_importo:,.2f}"])
+                        
+                        t = Table(data_rows, colWidths=[80, 70, 180, 200, 80], repeatRows=1)
+                        t.setStyle(TableStyle([
+                            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
+                            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                            ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#F4F6F7")),
+                            ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#BDC3C7")),
+                            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                        ]))
+                        elements.append(t)
                     
                     doc.build(elements)
                     st.success(f"PDF generato con successo: {filename}")
