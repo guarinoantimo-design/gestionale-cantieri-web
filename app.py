@@ -1001,7 +1001,6 @@ def page_riepilogo():
     opzioni_cantieri = ["Tutti i cantieri"] + [f"{row['id']} - {row['indirizzo']}" for _, row in cantieri.iterrows()]
     filtro_cantiere = col_r1.selectbox("Seleziona Cantiere", opzioni_cantieri, key="filtro_cantiere_report")
     
-    # Opzioni tipo costo con "Personale + Materiale"
     filtro_tipo_costo = col_r2.selectbox("Tipo di Costo", ["Tutti", "Personale", "Materiale", "Amministrativo", "Personale + Materiale"], key="filtro_tipo_report")
     
     filtro_descrizione = col_r3.text_input("Cerca nella Descrizione", placeholder="Es. massetto, fattura, commercialista...", key="filtro_desc_report")
@@ -1050,12 +1049,16 @@ def page_riepilogo():
     if dfs:
         df_report = pd.concat(dfs, ignore_index=True)
         
+        # --- ORDINAMENTO CRONOLOGICO ---
+        df_report['data'] = pd.to_datetime(df_report['data'])
+        df_report = df_report.sort_values(by='data', ascending=False)
+        
         if df_report.empty:
             st.info("Nessun costo trovato con i filtri selezionati.")
         else:
             totale_importo = df_report['Importo'].sum()
             
-            df_report['Data'] = df_report['data'].apply(formatta_data_italiana)
+            df_report['Data'] = df_report['data'].apply(lambda x: x.strftime('%d/%m/%Y'))
             df_visual = df_report[['Tipo', 'Data', 'Cantiere', 'Descrizione', 'Importo']].copy()
             df_visual['Importo'] = df_visual['Importo'].apply(lambda x: f"€ {x:,.2f}")
             
@@ -1071,7 +1074,6 @@ def page_riepilogo():
                     elements = []
                     styles = getSampleStyleSheet()
                     
-                    # Stile per il testo nelle celle
                     style_cell = ParagraphStyle(
                         'cell_style',
                         parent=styles['Normal'],
@@ -1088,11 +1090,9 @@ def page_riepilogo():
                     
                     # Se il filtro è "Personale + Materiale", gestiamo la doppia tabella
                     if filtro_tipo_costo == "Personale + Materiale":
-                        # Dividiamo i dati
                         df_pers = df_report[df_report['Tipo'] == 'Personale']
                         df_mat = df_report[df_report['Tipo'] == 'Materiale']
                         
-                        # Totale Personale
                         tot_pers = df_pers['Importo'].sum()
                         elements.append(Paragraph(f"<b>1. Costi Personale</b>", styles['Heading2']))
                         elements.append(Spacer(1, 5))
@@ -1102,7 +1102,7 @@ def page_riepilogo():
                             for _, row in df_pers.iterrows():
                                 data_rows_p.append([
                                     row['Tipo'], 
-                                    formatta_data_italiana(row['data']), 
+                                    row['data'].strftime('%d/%m/%Y'), 
                                     Paragraph(row['Cantiere'], style_cell), 
                                     Paragraph(row['Descrizione'], style_cell), 
                                     f"{row['Importo']:,.2f}"
@@ -1125,7 +1125,6 @@ def page_riepilogo():
                         
                         elements.append(Spacer(1, 20))
                         
-                        # Totale Materiale
                         tot_mat = df_mat['Importo'].sum()
                         elements.append(Paragraph(f"<b>2. Costi Materiale</b>", styles['Heading2']))
                         elements.append(Spacer(1, 5))
@@ -1135,7 +1134,7 @@ def page_riepilogo():
                             for _, row in df_mat.iterrows():
                                 data_rows_m.append([
                                     row['Tipo'], 
-                                    formatta_data_italiana(row['data']), 
+                                    row['data'].strftime('%d/%m/%Y'), 
                                     Paragraph(row['Cantiere'], style_cell), 
                                     Paragraph(row['Descrizione'], style_cell), 
                                     f"{row['Importo']:,.2f}"
@@ -1158,17 +1157,15 @@ def page_riepilogo():
                         
                         elements.append(Spacer(1, 20))
                         
-                        # Totale Generale (solo Personale + Materiale)
                         totale_complessivo = tot_pers + tot_mat
                         elements.append(Paragraph(f"<b>TOTALE GENERALE (Personale + Materiale): € {totale_complessivo:,.2f}</b>", styles['Heading2']))
                     
                     else:
-                        # Tabella unica per gli altri filtri
                         data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Importo (€)"]]
                         for _, row in df_report.iterrows():
                             data_rows.append([
                                 row['Tipo'], 
-                                formatta_data_italiana(row['data']), 
+                                row['data'].strftime('%d/%m/%Y'), 
                                 Paragraph(row['Cantiere'], style_cell), 
                                 Paragraph(row['Descrizione'], style_cell), 
                                 f"{row['Importo']:,.2f}"
