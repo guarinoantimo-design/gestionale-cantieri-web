@@ -156,6 +156,77 @@ def get_fornitori():
     conn.close()
     return df
 
+def calcola_quote_amministrative(data_inizio, data_fine, includi_esterne=True):
+    """
+    Calcola la quota di costi amministrativi da attribuire a ciascun cantiere
+    in proporzione alle ore lavorate nel periodo.
+    
+    Ritorna:
+    - dict {cantiere_id: quota_amm}
+    - tot_amm (totale costi amministrativi nel periodo)
+    - tot_amm_ripartito (somma delle quote effettivamente assegnate)
+    - tot_ore (ore totali considerate)
+    - ore_per_cantiere (dict {cantiere_id: ore})
+    """
+    conn = get_connection()
+    
+    # 1. Totale costi amministrativi nel periodo
+    q_amm = f"""
+        SELECT COALESCE(SUM(importo), 0) as tot
+        FROM costo_amministrativo
+        WHERE data >= '{data_inizio}' AND data <= '{data_fine}'
+    """
+    tot_amm = float(pd.read_sql_query(q_amm, conn).iloc[0]['tot'] or 0)
+    
+    # 2. Ore per cantiere nel periodo (tutti i cantieri, anche chiusi)
+    filtro_esterni = ""
+    if not includi_esterne:
+        filtro_esterni = "AND operaio IN (SELECT nome FROM operai WHERE tipo = 'Interno')"
+    
+    q_ore = f"""
+        SELECT cantiere_id, SUM(ore) as ore
+        FROM costo_manodopera
+        WHERE data >= '{data_inizio}' AND data <= '{data_fine}'
+        {filtro_esterni}
+        GROUP BY cantiere_id
+    """
+    df_ore = pd.read_sql_query(q_ore, conn)
+    conn.close()
+    
+    ore_per_cantiere = {}
+    for _, row in df_ore.iterrows():
+        ore_per_cantiere[int(row['cantiere_id'])] = float(row['ore'] or 0)
+    
+    tot_ore = sum(ore_per_cantiere.values())
+    
+    # 3. Ripartizione proporzionale con aggiustamento rounding
+    quote = {}
+    if tot_ore > 0 and tot_amm > 0:
+        quote_arrotondate = {}
+        somma_quote = 0.0
+        lista_items = list(ore_per_cantiere.items())
+        
+        for i, (cid, ore) in enumerate(lista_items):
+            if i < len(lista_items) - 1:
+                quota = round(tot_amm * (ore / tot_ore), 2)
+                quote_arrotondate[cid] = quota
+                somma_quote += quota
+            else:
+                # Ultimo cantiere: assorbe la differenza di arrotondamento
+                quote_arrotondate[cid] = round(tot_amm - somma_quote, 2)
+        
+        quote = quote_arrotondate
+    
+    tot_amm_ripartito = sum(quote.values())
+    
+    return {
+        'quote': quote,
+        'tot_amm': tot_amm,
+        'tot_amm_ripartito': tot_amm_ripartito,
+        'tot_ore': tot_ore,
+        'ore_per_cantiere': ore_per_cantiere
+    }
+
 # --- PAGINE ---
 def page_home():
     st.title("🏠 Home")
@@ -1327,6 +1398,325 @@ def page_riepilogo():
 
     conn.close()
 
+def page_bilanci():
+    st.title("⚖️ Bilanci per Cantiere")
+    st.write("Conto economico sintetico per ogni cantiere: incassi, costi diretti e quota costi amministrativi ripartita in proporzione alle ore lavorate.")
+    
+    # --- FILTRI ---
+    with st.expander("🔍 Filtri", expanded=True):
+        col1, col2, col3 = st.columns([1, 1, 1])
+        data_inizio = col1.date_input(
+            "Dal", 
+            value=datetime.date.today().replace(month=1, day=1), 
+            format="DD/MM/YYYY", 
+            key="bil_data_inizio"
+        )
+        data_fine = col2.date_input(
+            "Al", 
+            value=datetime.date.today(), 
+            format="DD/MM/YYYY", 
+            key="bil_data_fine"
+        )
+        includi_esterne = col3.checkbox(
+            "Includi operai esterni nel calcolo delle ore", 
+            value=True, 
+            key="bil_includi_esterne"
+        )
+    
+    if data_inizio > data_fine:
+        st.error("La data 'Dal' non può essere successiva alla data 'Al'.")
+        return
+    
+    # --- CALCOLO RIPARTIZIONE AMMINISTRATIVA ---
+    ripartizione = calcola_quote_amministrative(
+        str(data_inizio), str(data_fine), includi_esterne
+    )
+    
+    quote_amm = ripartizione['quote']
+    tot_amm = ripartizione['tot_amm']
+    tot_amm_ripartito = ripartizione['tot_amm_ripartito']
+    tot_ore = ripartizione['tot_ore']
+    ore_per_cantiere = ripartizione['ore_per_cantiere']
+    
+    # --- DATI PER CANTIERE ---
+    conn = get_connection()
+    
+    # Tutti i cantieri che hanno movimenti nel periodo (incassi, costi, ore)
+    q_cantieri = f"""
+        SELECT DISTINCT p.id, p.indirizzo, p.stato
+        FROM preventivi p
+        WHERE p.id IN (
+            SELECT cantiere_id FROM costo_manodopera WHERE data >= '{data_inizio}' AND data <= '{data_fine}'
+            UNION
+            SELECT cantiere_id FROM costo_materiali WHERE data >= '{data_inizio}' AND data <= '{data_fine}'
+            UNION
+            SELECT cantiere_id FROM incassi WHERE data >= '{data_inizio}' AND data <= '{data_fine}'
+        )
+        ORDER BY p.indirizzo
+    """
+    df_cantieri = pd.read_sql_query(q_cantieri, conn)
+    
+    if df_cantieri.empty:
+        st.info("Nessun cantiere con movimenti nel periodo selezionato.")
+        conn.close()
+        return
+    
+    # Incassi per cantiere (imponibile)
+    q_incassi = f"""
+        SELECT cantiere_id, COALESCE(SUM(imponibile), 0) as tot
+        FROM incassi
+        WHERE data >= '{data_inizio}' AND data <= '{data_fine}'
+        GROUP BY cantiere_id
+    """
+    df_incassi = pd.read_sql_query(q_incassi, conn).set_index('cantiere_id')['tot'].to_dict()
+    
+    # Costi personale per cantiere
+    q_pers = f"""
+        SELECT cantiere_id, COALESCE(SUM(totale), 0) as tot
+        FROM costo_manodopera
+        WHERE data >= '{data_inizio}' AND data <= '{data_fine}'
+        GROUP BY cantiere_id
+    """
+    df_pers = pd.read_sql_query(q_pers, conn).set_index('cantiere_id')['tot'].to_dict()
+    
+    # Costi materiali per cantiere (imponibile, coerente con incassi)
+    q_mat = f"""
+        SELECT cantiere_id, COALESCE(SUM(imponibile), 0) as tot
+        FROM costo_materiali
+        WHERE data >= '{data_inizio}' AND data <= '{data_fine}'
+        GROUP BY cantiere_id
+    """
+    df_mat = pd.read_sql_query(q_mat, conn).set_index('cantiere_id')['tot'].to_dict()
+    
+    conn.close()
+    
+    # --- COSTRUZIONE TABELLA BILANCIO ---
+    righe = []
+    for _, cant in df_cantieri.iterrows():
+        cid = int(cant['id'])
+        inc = float(df_incassi.get(cid, 0) or 0)
+        pers = float(df_pers.get(cid, 0) or 0)
+        mat = float(df_mat.get(cid, 0) or 0)
+        quota = float(quote_amm.get(cid, 0) or 0)
+        ore = float(ore_per_cantiere.get(cid, 0) or 0)
+        
+        costi_diretti = pers + mat
+        costi_totali = costi_diretti + quota
+        bilancio = inc - costi_totali
+        margine_pct = (bilancio / inc * 100) if inc > 0 else 0
+        
+        righe.append({
+            'Cantiere': cant['indirizzo'],
+            'Stato': cant['stato'],
+            'Ore': ore,
+            'Incassi': inc,
+            'Costi Personale': pers,
+            'Costi Materiali': mat,
+            'Quota Amm.': quota,
+            'Costi Totali': costi_totali,
+            'Bilancio': bilancio,
+            'Margine %': margine_pct
+        })
+    
+    df_bilancio = pd.DataFrame(righe)
+    df_bilancio = df_bilancio.sort_values('Bilancio', ascending=False)
+    
+    # Totali
+    tot_inc = df_bilancio['Incassi'].sum()
+    tot_pers = df_bilancio['Costi Personale'].sum()
+    tot_mat = df_bilancio['Costi Materiali'].sum()
+    tot_quota = df_bilancio['Quota Amm.'].sum()
+    tot_costi = df_bilancio['Costi Totali'].sum()
+    tot_bilancio = df_bilancio['Bilancio'].sum()
+    tot_ore_tab = df_bilancio['Ore'].sum()
+    
+    # --- KPI GLOBALI ---
+    st.markdown("### 📊 Sintesi del Periodo")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Incassi (Imponibile)", f"€ {tot_inc:,.2f}")
+    k2.metric("Costi Totali", f"€ {tot_costi:,.2f}", delta_color="inverse")
+    k3.metric("Bilancio", f"€ {tot_bilancio:,.2f}", 
+              delta_color="normal" if tot_bilancio >= 0 else "inverse")
+    k4.metric("Ore Totali", f"{tot_ore_tab:,.1f} h")
+    
+    st.divider()
+    
+    # --- TABELLA BILANCIO ---
+    st.subheader("📋 Bilancio per Cantiere")
+    
+    df_visual = df_bilancio.copy()
+    for col in ['Ore']:
+        df_visual[col] = df_visual[col].apply(lambda x: f"{x:,.1f}")
+    for col in ['Incassi', 'Costi Personale', 'Costi Materiali', 'Quota Amm.', 'Costi Totali']:
+        df_visual[col] = df_visual[col].apply(lambda x: f"€ {x:,.2f}")
+    df_visual['Bilancio'] = df_visual['Bilancio'].apply(lambda x: f"€ {x:,.2f}")
+    df_visual['Margine %'] = df_visual['Margine %'].apply(lambda x: f"{x:.1f}%")
+    
+    # Riga totale
+    riga_tot = pd.DataFrame([{
+        'Cantiere': 'TOTALE',
+        'Stato': '',
+        'Ore': f"{tot_ore_tab:,.1f}",
+        'Incassi': f"€ {tot_inc:,.2f}",
+        'Costi Personale': f"€ {tot_pers:,.2f}",
+        'Costi Materiali': f"€ {tot_mat:,.2f}",
+        'Quota Amm.': f"€ {tot_quota:,.2f}",
+        'Costi Totali': f"€ {tot_costi:,.2f}",
+        'Bilancio': f"€ {tot_bilancio:,.2f}",
+        'Margine %': f"{(tot_bilancio / tot_inc * 100) if tot_inc > 0 else 0:.1f}%"
+    }])
+    df_visual = pd.concat([df_visual, riga_tot], ignore_index=True)
+    
+    st.dataframe(df_visual, use_container_width=True)
+    
+    # --- NOTA TRASPARENZA COSTI AMMINISTRATIVI ---
+    st.info(
+        f"💡 **Ripartizione costi amministrativi:** € {tot_amm:,.2f} totali nel periodo, "
+        f"di cui **€ {tot_amm_ripartito:,.2f}** ripartiti sui cantieri in proporzione alle ore "
+        f"({tot_ore:,.1f} h totali). "
+        f"Residuo non allocato: **€ {tot_amm - tot_amm_ripartito:,.2f}** "
+        f"({'nessuna ora registrata nel periodo' if tot_ore == 0 else 'arrotondamenti'})."
+    )
+    
+    if not includi_esterne:
+        st.caption("ℹ️ Calcolo ore effettuato considerando solo operai **interni**.")
+    
+    st.divider()
+    
+    # --- GRAFICO BILANCI ---
+    st.subheader("📈 Bilancio per Cantiere (grafico)")
+    
+    fig, ax = plt.subplots(figsize=(10, max(3, len(df_bilancio) * 0.5)))
+    cantieri_plot = df_bilancio['Cantiere'].tolist()
+    bilanci_plot = df_bilancio['Bilancio'].tolist()
+    colori = ['#27AE60' if b >= 0 else '#E74C3C' for b in bilanci_plot]
+    
+    bars = ax.barh(cantieri_plot, bilanci_plot, color=colori)
+    ax.axvline(0, color='black', linewidth=0.8)
+    ax.set_xlabel("Bilancio (€)")
+    ax.set_title(f"Bilancio per cantiere — dal {formatta_data_italiana(data_inizio)} al {formatta_data_italiana(data_fine)}")
+    ax.grid(True, axis='x', linestyle='--', alpha=0.5)
+    
+    for bar, val in zip(bars, bilanci_plot):
+        offset = 5 if val >= 0 else -5
+        ax.text(val + offset, bar.get_y() + bar.get_height()/2, 
+                f"€ {val:,.0f}", va='center', 
+                ha='left' if val >= 0 else 'right', fontsize=8)
+    
+    plt.tight_layout()
+    st.pyplot(fig)
+    
+    st.divider()
+    
+    # --- EXPORT PDF ---
+    st.subheader("📄 Esporta Bilancio in PDF")
+    
+    if st.button("📄 Genera PDF Bilancio", type="primary", key="btn_export_bilanci_pdf"):
+        try:
+            filename = f"Bilancio_Cantieri_{datetime.date.today()}.pdf"
+            doc = SimpleDocTemplate(filename, pagesize=landscape(A4))
+            elements = []
+            styles = getSampleStyleSheet()
+            
+            style_cell = ParagraphStyle('cell_bil', parent=styles['Normal'], 
+                                        fontSize=7, leading=9, alignment=0)
+            style_num = ParagraphStyle('num_bil', parent=styles['Normal'], 
+                                       fontSize=7, leading=9, alignment=2)
+            
+            data_inizio_it = formatta_data_italiana(data_inizio)
+            data_fine_it = formatta_data_italiana(data_fine)
+            
+            elements.append(Paragraph(
+                f"Bilancio Cantieri dal {data_inizio_it} al {data_fine_it}", 
+                styles['Title']
+            ))
+            elements.append(Paragraph(
+                f"Ore considerate: {'tutte (interne + esterne)' if includi_esterne else 'solo interne'}", 
+                styles['Normal']
+            ))
+            elements.append(Spacer(1, 12))
+            
+            # Intestazioni
+            header = ["Cantiere", "Stato", "Ore", "Incassi (€)", 
+                      "Pers. (€)", "Mat. (€)", "Quota Amm. (€)", 
+                      "Costi Tot. (€)", "Bilancio (€)", "Marg. %"]
+            data_rows = [header]
+            
+            for _, r in df_bilancio.iterrows():
+                data_rows.append([
+                    Paragraph(r['Cantiere'], style_cell),
+                    r['Stato'],
+                    f"{r['Ore']:,.1f}",
+                    Paragraph(f"{r['Incassi']:,.2f}", style_num),
+                    Paragraph(f"{r['Costi Personale']:,.2f}", style_num),
+                    Paragraph(f"{r['Costi Materiali']:,.2f}", style_num),
+                    Paragraph(f"{r['Quota Amm.']:,.2f}", style_num),
+                    Paragraph(f"{r['Costi Totali']:,.2f}", style_num),
+                    Paragraph(f"{r['Bilancio']:,.2f}", style_num),
+                    f"{r['Margine %']:.1f}%"
+                ])
+            
+            # Riga totale
+            data_rows.append([
+                Paragraph("<b>TOTALE</b>", style_cell),
+                "",
+                f"{tot_ore_tab:,.1f}",
+                Paragraph(f"<b>{tot_inc:,.2f}</b>", style_num),
+                Paragraph(f"<b>{tot_pers:,.2f}</b>", style_num),
+                Paragraph(f"<b>{tot_mat:,.2f}</b>", style_num),
+                Paragraph(f"<b>{tot_quota:,.2f}</b>", style_num),
+                Paragraph(f"<b>{tot_costi:,.2f}</b>", style_num),
+                Paragraph(f"<b>{tot_bilancio:,.2f}</b>", style_num),
+                f"{(tot_bilancio / tot_inc * 100) if tot_inc > 0 else 0:.1f}%"
+            ])
+            
+            col_widths = [140, 45, 40, 65, 65, 65, 65, 65, 65, 45]
+            t = Table(data_rows, colWidths=col_widths, repeatRows=1)
+            
+            style_commands = [
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('TOPPADDING', (0, 0), (-1, 0), 8),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#BDC3C7")),
+                ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor("#ECF0F1")),
+            ]
+            
+            # Colora in verde/rosso la colonna Bilancio
+            for i, r in enumerate(df_bilancio.itertuples(), start=1):
+                colore = colors.HexColor("#D5F4E6") if r._9 >= 0 else colors.HexColor("#FADBD8")
+                style_commands.append(('BACKGROUND', (8, i), (8, i), colore))
+            
+            t.setStyle(TableStyle(style_commands))
+            elements.append(t)
+            
+            elements.append(Spacer(1, 16))
+            elements.append(Paragraph(
+                f"<b>Ripartizione costi amministrativi:</b> € {tot_amm:,.2f} totali nel periodo, "
+                f"€ {tot_amm_ripartito:,.2f} ripartiti in proporzione alle ore "
+                f"({tot_ore:,.1f} h), € {tot_amm - tot_amm_ripartito:,.2f} non allocati.",
+                styles['Normal']
+            ))
+            
+            doc.build(elements)
+            st.success(f"PDF generato con successo: {filename}")
+            
+            with open(filename, "rb") as f:
+                st.download_button(
+                    label="⬇️ Scarica il PDF",
+                    data=f,
+                    file_name=filename,
+                    mime="application/pdf",
+                    key="dl_bilanci_pdf"
+                )
+        except Exception as e:
+            st.error(f"Errore durante la generazione del PDF: {e}")
+
 # --- NAVIGAZIONE ---
 if not st.session_state.logged_in:
     login_page()
@@ -1348,6 +1738,8 @@ else:
             st.session_state.current_page = "Avanzamento"; st.rerun()
         if st.button("📊 Riepilogo", use_container_width=True, key="sidebar_riepilogo"):
             st.session_state.current_page = "Riepilogo"; st.rerun()
+        if st.button("⚖️ Bilanci", use_container_width=True, key="sidebar_bilanci"):
+            st.session_state.current_page = "Bilanci"; st.rerun()    
         
         if st.session_state.is_admin:
             if st.button("👤 Gestione Utenti", use_container_width=True, key="sidebar_utenti"):
@@ -1381,4 +1773,5 @@ else:
     elif st.session_state.current_page == "Incassi": page_incassi()
     elif st.session_state.current_page == "Avanzamento": page_avanzamento()
     elif st.session_state.current_page == "Riepilogo": page_riepilogo()
+    elif st.session_state.current_page == "Bilanci": page_bilanci()    
     elif st.session_state.current_page == "Utenti" and st.session_state.is_admin: page_utenti()
