@@ -199,8 +199,6 @@ def page_home():
             st.session_state.current_page = "Costi"; st.rerun()
         if st.button("📈 Avanzamento Cantieri", use_container_width=True, key="home_btn_avanzamento"):
             st.session_state.current_page = "Avanzamento"; st.rerun()
-        if st.button("📊 Bilanci Cantieri", use_container_width=True, key="home_btn_bilanci"):
-            st.session_state.current_page = "Bilanci"; st.rerun()
     with col_btn2:
         if st.button("👥 Anagrafica", use_container_width=True, key="home_btn_anagrafiche"):
             st.session_state.current_page = "Anagrafiche"; st.rerun()
@@ -1166,4 +1164,221 @@ def page_riepilogo():
                                 ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#F4F6F7")),
                                 ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#BDC3C7")),
                                 ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
-                            ]
+                            ]))
+                            elements.append(t)
+                        else:
+                            elements.append(Paragraph("Nessun dato nel periodo selezionato.", styles['Normal']))
+                        
+                        elements.append(Spacer(1, 20))
+                        return tot
+
+                    # Logica di stampa in base al filtro
+                    if filtro_tipo_costo == "Tutti":
+                        df_int = df_report[df_report['Tipo'] == 'Personale Interno']
+                        df_est = df_report[df_report['Tipo'] == 'Personale Esterno']
+                        df_mat = df_report[df_report['Tipo'] == 'Materiale']
+                        df_amm = df_report[df_report['Tipo'] == 'Amministrativo']
+                        
+                        tot_int = crea_tabella_pdf(df_int, "1. Costi Personale Interno", "#2C3E50")
+                        tot_est = crea_tabella_pdf(df_est, "2. Costi Personale Esterno", "#2C3E50")
+                        tot_mat = crea_tabella_pdf(df_mat, "3. Costi Materiali", "#2C3E50")
+                        tot_amm = crea_tabella_pdf(df_amm, "4. Costi Amministrativi", "#2C3E50")
+                        
+                        totale_complessivo = tot_int + tot_est + tot_mat + tot_amm
+                        elements.append(Paragraph(f"<b>TOTALE GENERALE ASSOLUTO: € {totale_complessivo:,.2f}</b>", styles['Heading1']))
+                    
+                    elif filtro_tipo_costo == "Personale + Materiale":
+                        df_int = df_report[df_report['Tipo'] == 'Personale Interno']
+                        df_est = df_report[df_report['Tipo'] == 'Personale Esterno']
+                        df_mat = df_report[df_report['Tipo'] == 'Materiale']
+                        
+                        tot_int = crea_tabella_pdf(df_int, "1. Costi Personale Interno", "#2C3E50")
+                        tot_est = crea_tabella_pdf(df_est, "2. Costi Personale Esterno", "#2C3E50")
+                        tot_mat = crea_tabella_pdf(df_mat, "3. Costi Materiali", "#2C3E50")
+                        
+                        totale_complessivo = tot_int + tot_est + tot_mat
+                        elements.append(Paragraph(f"<b>TOTALE GENERALE ASSOLUTO (Personale + Materiale): € {totale_complessivo:,.2f}</b>", styles['Heading1']))
+                    
+                    elif filtro_tipo_costo == "Personale (Tutti)":
+                        df_int = df_report[df_report['Tipo'] == 'Personale Interno']
+                        df_est = df_report[df_report['Tipo'] == 'Personale Esterno']
+                        
+                        tot_int = crea_tabella_pdf(df_int, "1. Costi Personale Interno", "#34495E")
+                        tot_est = crea_tabella_pdf(df_est, "2. Costi Personale Esterno", "#34495E")
+                        
+                        totale_complessivo = tot_int + tot_est
+                        elements.append(Paragraph(f"<b>TOTALE GENERALE PERSONALE: € {totale_complessivo:,.2f}</b>", styles['Heading1']))
+
+                    else:
+                        crea_tabella_pdf(df_report, "Dettaglio Costi", "#2C3E50")
+                        elements.append(Paragraph(f"<b>TOTALE GENERALE: € {totale_importo:,.2f}</b>", styles['Heading1']))
+                    
+                    doc.build(elements)
+                    st.success(f"PDF generato con successo: {filename}")
+                    
+                    with open(filename, "rb") as f:
+                        st.download_button(
+                            label="⬇️ Scarica il PDF",
+                            data=f,
+                            file_name=filename,
+                            mime="application/pdf"
+                        )
+                except Exception as e:
+                    st.error(f"Errore durante la generazione del PDF: {e}")
+
+    st.divider()
+
+    # --- GRAFICI ESISTENTI ---
+    st.subheader("📈 Andamento Economico")
+    df_cantieri = pd.read_sql_query("SELECT id, indirizzo FROM preventivi", conn)
+    
+    if df_cantieri.empty:
+        st.info("Nessun cantiere presente.")
+        conn.close()
+        return
+        
+    opzioni = ["--- TUTTI I CANTIERI ATTIVI ---"] + [f"{row['id']} - {row['indirizzo']}" for _, row in df_cantieri.iterrows()]
+    scelta = st.selectbox("Seleziona Cantiere per il grafico:", opzioni, key="sel_riepilogo_grafico")
+    
+    if scelta == "--- TUTTI I CANTIERI ATTIVI ---":
+        query_incassi = "SELECT i.data, i.imponibile as totale FROM incassi i JOIN preventivi p ON i.cantiere_id = p.id WHERE p.stato = 'Attivo'"
+        query_costi_m = "SELECT c.data, c.totale FROM costo_manodopera c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo'"
+        query_costi_mat = "SELECT c.data, c.imponibile as totale FROM costo_materiali c JOIN preventivi p ON c.cantiere_id = p.id WHERE p.stato = 'Attivo'"
+        query_costi_amm = "SELECT data, importo as totale, 'Costo Amm' as Tipo FROM costo_amministrativo"
+        
+        df_inc = pd.read_sql_query(query_incassi, conn)
+        df_man = pd.read_sql_query(query_costi_m, conn)
+        df_mat = pd.read_sql_query(query_costi_mat, conn)
+        df_amm = pd.read_sql_query(query_costi_amm, conn)
+        
+        if df_inc.empty and df_man.empty and df_mat.empty and df_amm.empty:
+            st.info("Nessun dato economico disponibile.")
+        else:
+            df_inc['Tipo'] = 'Incasso'; df_man['Tipo'] = 'Costo Pers'; df_mat['Tipo'] = 'Costo Mat'
+            all_movs = pd.concat([df_inc, df_man, df_mat, df_amm])
+            
+            if not all_movs.empty:
+                all_movs['data'] = pd.to_datetime(all_movs['data'])
+                all_movs = all_movs.sort_values('data')
+                
+                all_movs['Incassi Cum'] = all_movs.apply(lambda x: x['totale'] if x['Tipo'] == 'Incasso' else 0, axis=1).cumsum()
+                all_movs['Costi Cum'] = all_movs.apply(lambda x: x['totale'] if 'Costo' in x['Tipo'] else 0, axis=1).cumsum()
+
+                fig, ax = plt.subplots(figsize=(10, 4))
+                ax.plot(all_movs['data'], all_movs['Incassi Cum'], label='Incassi (Imponibile)', color='green', marker='o', linewidth=2)
+                ax.plot(all_movs['data'], all_movs['Costi Cum'], label='Costi', color='red', marker='x', linewidth=2)
+                ax.set_title("Andamento Economico Globale")
+                ax.legend(); ax.grid(True, linestyle='--', alpha=0.6)
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y'))
+                plt.xticks(rotation=45); plt.tight_layout()
+                st.pyplot(fig)
+            else:
+                st.info("Nessun dato disponibile.")
+    else:
+        cid = int(scelta.split(" - ")[0])
+        
+        query_dati = f"""
+            SELECT 
+                p.importo_contratto,
+                (SELECT SUM(imponibile) FROM incassi WHERE cantiere_id = {cid}) as incassi,
+                (SELECT SUM(totale) FROM costo_manodopera WHERE cantiere_id = {cid}) as costi_man,
+                (SELECT SUM(imponibile) FROM costo_materiali WHERE cantiere_id = {cid}) as costi_mat
+            FROM preventivi p WHERE p.id = {cid}
+        """
+        dati = pd.read_sql_query(query_dati, conn).iloc[0]
+        
+        importo_contratto = dati['importo_contratto'] or 0
+        incassi_c = dati['incassi'] or 0
+        costi_c = (dati['costi_man'] or 0) + (dati['costi_mat'] or 0)
+        
+        perc_avanz = (incassi_c / importo_contratto * 100) if importo_contratto > 0 else 0
+        
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Contratto", f"€ {importo_contratto:,.2f}")
+        col2.metric("Incassato (Imponibile)", f"€ {incassi_c:,.2f}")
+        col3.metric("Costi", f"€ {costi_c:,.2f}", delta_color="inverse")
+        col4.metric("Avanzamento", f"{perc_avanz:.1f}%")
+        
+        st.progress(min(perc_avanz / 100, 1.0))
+        
+        query_incassi = f"SELECT data, imponibile as totale, 'Incasso' as Tipo FROM incassi WHERE cantiere_id = {cid}"
+        query_costi_m = f"SELECT data, totale, 'Costo Pers' as Tipo FROM costo_manodopera WHERE cantiere_id = {cid}"
+        query_costi_mat = f"SELECT data, imponibile as totale, 'Costo Mat' as Tipo FROM costo_materiali WHERE cantiere_id = {cid}"
+        
+        all_movs = pd.read_sql_query(f"{query_incassi} UNION ALL {query_costi_m} UNION ALL {query_costi_mat}", conn)
+        
+        if not all_movs.empty:
+            all_movs['data'] = pd.to_datetime(all_movs['data'])
+            all_movs = all_movs.sort_values('data')
+            
+            all_movs['Incassi Cum'] = all_movs.apply(lambda x: x['totale'] if x['Tipo'] == 'Incasso' else 0, axis=1).cumsum()
+            all_movs['Costi Cum'] = all_movs.apply(lambda x: x['totale'] if 'Costo' in x['Tipo'] else 0, axis=1).cumsum()
+
+            fig, ax = plt.subplots(figsize=(10, 4))
+            ax.plot(all_movs['data'], all_movs['Incassi Cum'], label='Incassi (Imponibile)', color='green', marker='o', linewidth=2)
+            ax.plot(all_movs['data'], all_movs['Costi Cum'], label='Costi', color='red', marker='x', linewidth=2)
+            ax.set_title(f"Andamento Economico: {scelta.split(' - ')[1]}")
+            ax.legend(); ax.grid(True, linestyle='--', alpha=0.6)
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y'))
+            plt.xticks(rotation=45); plt.tight_layout()
+            st.pyplot(fig)
+        else:
+            st.info("Nessun movimento economico per questo cantiere.")
+
+    conn.close()
+
+# --- NAVIGAZIONE ---
+if not st.session_state.logged_in:
+    login_page()
+else:
+    with st.sidebar:
+        st.markdown(f"### 👤 Utente: {st.session_state.username}")
+        st.divider()
+        if st.button("🏠 Home", use_container_width=True, key="sidebar_home"):
+            st.session_state.current_page = "Home"; st.rerun()
+        if st.button("📋 Cantieri", use_container_width=True, key="sidebar_cantieri"):
+            st.session_state.current_page = "Cantieri"; st.rerun()
+        if st.button("👥 Anagrafiche", use_container_width=True, key="sidebar_anagrafiche"):
+            st.session_state.current_page = "Anagrafiche"; st.rerun()
+        if st.button("📉 Costi", use_container_width=True, key="sidebar_costi"):
+            st.session_state.current_page = "Costi"; st.rerun()
+        if st.button("💰 Incassi", use_container_width=True, key="sidebar_incassi"):
+            st.session_state.current_page = "Incassi"; st.rerun()
+        if st.button("📈 Avanzamento", use_container_width=True, key="sidebar_avanzamento"):
+            st.session_state.current_page = "Avanzamento"; st.rerun()
+        if st.button("📊 Riepilogo", use_container_width=True, key="sidebar_riepilogo"):
+            st.session_state.current_page = "Riepilogo"; st.rerun()
+        
+        if st.session_state.is_admin:
+            if st.button("👤 Gestione Utenti", use_container_width=True, key="sidebar_utenti"):
+                st.session_state.current_page = "Utenti"; st.rerun()
+        
+        st.divider()
+        
+        st.markdown("##### 💾 Sicurezza Dati")
+        try:
+            with open(DB_NAME, "rb") as f:
+                st.download_button(
+                    label="Scarica Backup Database",
+                    data=f,
+                    file_name=f"backup_gestionale_{datetime.date.today()}.db",
+                    mime="application/octet-stream",
+                    key="sidebar_backup_db",
+                    use_container_width=True
+                )
+        except FileNotFoundError:
+            st.caption("Nessun database da salvare.")
+        
+        st.divider()
+        
+        if st.button("🚪 Logout", type="primary", use_container_width=True, key="sidebar_logout"):
+            st.session_state.logged_in = False; st.session_state.is_admin = False; st.rerun()
+
+    if st.session_state.current_page == "Home": page_home()
+    elif st.session_state.current_page == "Cantieri": page_cantieri()
+    elif st.session_state.current_page == "Anagrafiche": page_anagrafiche()
+    elif st.session_state.current_page == "Costi": page_costi()
+    elif st.session_state.current_page == "Incassi": page_incassi()
+    elif st.session_state.current_page == "Avanzamento": page_avanzamento()
+    elif st.session_state.current_page == "Riepilogo": page_riepilogo()
+    elif st.session_state.current_page == "Utenti" and st.session_state.is_admin: page_utenti()
