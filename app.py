@@ -160,13 +160,6 @@ def calcola_quote_amministrative(data_inizio, data_fine, includi_esterne=True):
     """
     Calcola la quota di costi amministrativi da attribuire a ciascun cantiere
     in proporzione alle ore lavorate nel periodo.
-    
-    Ritorna:
-    - dict {cantiere_id: quota_amm}
-    - tot_amm (totale costi amministrativi nel periodo)
-    - tot_amm_ripartito (somma delle quote effettivamente assegnate)
-    - tot_ore (ore totali considerate)
-    - ore_per_cantiere (dict {cantiere_id: ore})
     """
     conn = get_connection()
     
@@ -1603,6 +1596,13 @@ def page_bilanci():
                 f"€ {val:,.0f}", va='center', 
                 ha='left' if val >= 0 else 'right', fontsize=8)
     
+    # Aggiungi margine per non tagliare le etichette
+    max_val = max(bilanci_plot) if bilanci_plot else 0
+    min_val = min(bilanci_plot) if bilanci_plot else 0
+    margine = (max_val - min_val) * 0.15
+    if margine == 0: margine = 100  # fallback se i valori sono tutti 0
+    ax.set_xlim(min_val - margine, max_val + margine)
+    
     plt.tight_layout()
     st.pyplot(fig)
     
@@ -1687,9 +1687,9 @@ def page_bilanci():
                 ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor("#ECF0F1")),
             ]
             
-            # Colora in verde/rosso la colonna Bilancio
-            for i, r in enumerate(df_bilancio.itertuples(), start=1):
-                colore = colors.HexColor("#D5F4E6") if r._9 >= 0 else colors.HexColor("#FADBD8")
+            # Colora in verde/rosso la colonna Bilancio (corretto con iterrows)
+            for i, (_, r) in enumerate(df_bilancio.iterrows(), start=1):
+                colore = colors.HexColor("#D5F4E6") if r['Bilancio'] >= 0 else colors.HexColor("#FADBD8")
                 style_commands.append(('BACKGROUND', (8, i), (8, i), colore))
             
             t.setStyle(TableStyle(style_commands))
@@ -1739,7 +1739,7 @@ else:
         if st.button("📊 Riepilogo", use_container_width=True, key="sidebar_riepilogo"):
             st.session_state.current_page = "Riepilogo"; st.rerun()
         if st.button("⚖️ Bilanci", use_container_width=True, key="sidebar_bilanci"):
-            st.session_state.current_page = "Bilanci"; st.rerun()    
+            st.session_state.current_page = "Bilanci"; st.rerun()
         
         if st.session_state.is_admin:
             if st.button("👤 Gestione Utenti", use_container_width=True, key="sidebar_utenti"):
@@ -1773,5 +1773,5 @@ else:
     elif st.session_state.current_page == "Incassi": page_incassi()
     elif st.session_state.current_page == "Avanzamento": page_avanzamento()
     elif st.session_state.current_page == "Riepilogo": page_riepilogo()
-    elif st.session_state.current_page == "Bilanci": page_bilanci()    
+    elif st.session_state.current_page == "Bilanci": page_bilanci()
     elif st.session_state.current_page == "Utenti" and st.session_state.is_admin: page_utenti()
