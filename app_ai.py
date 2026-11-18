@@ -1,74 +1,937 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
+import datetime
+import hashlib
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+
+# Librerie per il PDF con gestione testo
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
+# Nuova libreria per Supabase
 from st_supabase_connection import SupabaseConnection
 
-st.set_page_config(page_title="Traghetto Dati", page_icon="🚚", layout="wide")
+# --- CONFIGURAZIONE PAGINA ---
+st.set_page_config(page_title="Gestionale Cantieri", page_icon="🏗️", layout="wide")
 
-# --- CONNESSIONE SUPABASE ---
+# --- CONNESSIONE DATABASE (SUPABASE) ---
 conn = st.connection("supabase", type=SupabaseConnection)
 supabase = conn.client
 
-def migra_dati(file_db):
+# --- FUNZIONE PER FORMATO DATA ITALIANO ---
+def formatta_data_italiana(data_str):
+    if not data_str:
+        return ""
     try:
-        sqlite_conn = sqlite3.connect(file_db)
-        
-        # Elenco delle tabelle da migrare (ESCLUDE 'users' per non toccare l'admin)
-        tabelle = [
-            "preventivi", "operai", "fornitori", 
-            "costo_manodopera", "costo_materiali", "costo_amministrativo", 
-            "categorie_amministrative", "incassi"
-        ]
-        
-        report = []
-        
-        for t in tabelle:
-            # 1. Svuota la tabella su Supabase (con un metodo diverso e più sicuro)
-            try:
-                # Cancella tutti i record (neq a un valore impossibile per prendere tutti)
-                supabase.table(t).delete().neq("id", -999).execute()
-            except Exception as e:
-                # Se fallisce lo svuotamento, lo ignoriamo e andiamo avanti (magari era già vuota)
-                pass
+        data_obj = datetime.datetime.strptime(str(data_str)[:10], "%Y-%m-%d")
+        return data_obj.strftime("%d/%m/%Y")
+    except:
+        return str(data_str)
+
+# --- AUTENTICAZIONE ---
+def verify_login(username, password):
+    try:
+        response = supabase.table("users").select("password_hash, is_admin").eq("username", username).execute()
+        if response.data:
+            user = response.data[0]
+            hashed_pw = hashlib.sha256(password.encode()).hexdigest()
+            if user['password_hash'] == hashed_pw:
+                return (username, user['is_admin'])
+        return None
+    except Exception as e:
+        st.error(f"Errore di connessione: {e}")
+        return None
+
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+if 'current_page' not in st.session_state:
+    st.session_state.current_page = "Home"
+if 'is_admin' not in st.session_state:
+    st.session_state.is_admin = False
+
+def login_page():
+    st.markdown("<h1 style='text-align: center; color: #2C3E50;'>🏗️ Gestionale Cantieri</h1>", unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        with st.form("login_form"):
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            submit = st.form_submit_button("Accedi", use_container_width=True)
+            if submit:
+                user = verify_login(username, password)
+                if user:
+                    st.session_state.logged_in = True
+                    st.session_state.username = user[0]
+                    st.session_state.is_admin = user[1]
+                    st.rerun()
+                else:
+                    st.error("Credenziali non valide.")
+
+# --- FUNZIONI DI SUPPORTO ---
+def get_cantieri():
+    response = supabase.table("preventivi").select("id, indirizzo").execute()
+    return pd.DataFrame(response.data)
+
+def get_operai():
+    response = supabase.table("operai").select("*").execute()
+    return pd.DataFrame(response.data)
+
+def get_fornitori():
+    response = supabase.table("fornitori").select("*").execute()
+    return pd.DataFrame(response.data)
+
+def calcola_quote_amministrative(data_inizio, data_fine, includi_esterne=True):
+    # Recupero dati da Supabase
+    res_amm = supabase.table("costo_amministrativo").select("importo").gte("data", str(data_inizio)).lte("data", str(data_fine)).execute()
+    tot_amm = sum(float(item['importo'] or 0) for item in res_amm.data)
+    
+    res_man = supabase.table("costo_manodopera").select("cantiere_id, ore, operaio").gte("data", str(data_inizio)).lte("data", str(data_fine)).execute()
+    df_ore = pd.DataFrame(res_man.data)
+    
+    if df_ore.empty:
+        return {'quote': {}, 'tot_amm': tot_amm, 'tot_amm_ripartito': 0, 'tot_ore': 0, 'ore_per_cantiere': {}}
+
+    if not includi_esterne:
+        res_operai = supabase.table("operai").select("nome").eq("tipo", "Interno").execute()
+        operai_interni = [o['nome'] for o in res_operai.data]
+        df_ore = df_ore[df_ore['operaio'].isin(operai_interni)]
+    
+    if df_ore.empty:
+         return {'quote': {}, 'tot_amm': tot_amm, 'tot_amm_ripartito': 0, 'tot_ore': 0, 'ore_per_cantiere': {}}
+
+    df_ore['ore'] = pd.to_numeric(df_ore['ore'], errors='coerce').fillna(0)
+    ore_grouped = df_ore.groupby('cantiere_id')['ore'].sum().to_dict()
+    ore_per_cantiere = {int(k): float(v) for k, v in ore_grouped.items()}
+    tot_ore = sum(ore_per_cantiere.values())
+    
+    quote = {}
+    if tot_ore > 0 and tot_amm > 0:
+        somma_quote = 0.0
+        lista_items = list(ore_per_cantiere.items())
+        for i, (cid, ore) in enumerate(lista_items):
+            if i < len(lista_items) - 1:
+                quota = round(tot_amm * (ore / tot_ore), 2)
+                quote[cid] = quota
+                somma_quote += quota
+            else:
+                quote[cid] = round(tot_amm - somma_quote, 2)
                 
-            # 2. Legge i dati dal vecchio DB
-            df = pd.read_sql_query(f"SELECT * FROM {t}", sqlite_conn)
-            if df.empty:
-                report.append(f"ℹ️ Tabella {t}: 0 righe (vuota)")
+    return {
+        'quote': quote,
+        'tot_amm': tot_amm,
+        'tot_amm_ripartito': sum(quote.values()),
+        'tot_ore': tot_ore,
+        'ore_per_cantiere': ore_per_cantiere
+    }
+
+# --- PAGINE ---
+def page_home():
+    st.title("🏠 Home")
+    st.write("GESTIONE CANTIERE. Situazione attualizzata.")
+    
+    try:
+        res_cant = supabase.table("preventivi").select("id", count="exact").eq("stato", "Attivo").execute()
+        num_cantieri = res_cant.count if res_cant.count else 0
+        
+        # Nota: fare calcoli complessi (somme con JOIN) via API REST è lento. 
+        # Scarichiamo i dati e calcoliamo in Python.
+        res_inc = supabase.table("incassi").select("imponibile, cantiere_id").execute()
+        res_man = supabase.table("costo_manodopera").select("totale, cantiere_id").execute()
+        res_mat = supabase.table("costo_materiali").select("imponibile, cantiere_id").execute()
+        res_amm = supabase.table("costo_amministrativo").select("importo").execute()
+        res_prev = supabase.table("preventivi").select("id").eq("stato", "Attivo").execute()
+        
+        attivi = [p['id'] for p in res_prev.data]
+        
+        tot_incassi = sum(float(i['imponibile'] or 0) for i in res_inc.data if i['cantiere_id'] in attivi)
+        tot_costi_pers = sum(float(c['totale'] or 0) for c in res_man.data if c['cantiere_id'] in attivi)
+        tot_costi_mat = sum(float(c['imponibile'] or 0) for c in res_mat.data if c['cantiere_id'] in attivi)
+        tot_costi_amm = sum(float(c['importo'] or 0) for c in res_amm.data)
+        
+        tot_costi = tot_costi_pers + tot_costi_mat + tot_costi_amm
+        saldo = tot_incassi - tot_costi
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric(label="🏗️ Cantieri Attivi", value=num_cantieri)
+        with col2:
+            st.metric(label="💰 Incassi (Imponibile)", value=f"€ {tot_incassi:,.2f}")
+        with col3:
+            st.metric(label="📉 Costi Totali", value=f"€ {tot_costi:,.2f}", delta_color="inverse")
+        with col4:
+            st.metric(label="⚖️ Saldo", value=f"€ {saldo:,.2f}", delta_color="normal" if saldo >= 0 else "inverse")
+            
+    except Exception as e:
+        st.error(f"Errore caricamento dati: {e}")
+
+    st.divider()
+    st.subheader("🚀 Accessi Rapidi")
+    col_btn1, col_btn2 = st.columns(2)
+    with col_btn1:
+        if st.button("📋 Inserisci Cantieri", use_container_width=True, key="home_btn_cantieri"):
+            st.session_state.current_page = "Cantieri"; st.rerun()
+        if st.button("📉 Inserisci Costi", use_container_width=True, key="home_btn_costi"):
+            st.session_state.current_page = "Costi"; st.rerun()
+        if st.button("📈 Avanzamento Cantieri", use_container_width=True, key="home_btn_avanzamento"):
+            st.session_state.current_page = "Avanzamento"; st.rerun()
+    with col_btn2:
+        if st.button("👥 Anagrafica", use_container_width=True, key="home_btn_anagrafiche"):
+            st.session_state.current_page = "Anagrafiche"; st.rerun()
+        if st.button("💰 Incassi", use_container_width=True, key="home_btn_incassi"):
+            st.session_state.current_page = "Incassi"; st.rerun()
+        if st.button("📊 Riepilogo", use_container_width=True, key="home_btn_riepilogo"):
+            st.session_state.current_page = "Riepilogo"; st.rerun()
+
+def page_cantieri():
+    st.title("📋 Gestione Cantieri")
+    
+    with st.expander("➕ Aggiungi Nuovo Cantiere"):
+        with st.form("nuovo_cantiere_form", clear_on_submit=True):
+            col1, col2, col3 = st.columns(3)
+            data = col1.date_input("Data", datetime.date.today(), format="DD/MM/YYYY")
+            n_prev = col2.text_input("N. Preventivo")
+            cliente = col3.text_input("Cliente")
+            col4, col5, col6 = st.columns(3)
+            indirizzo = col4.text_input("Indirizzo Cantiere")
+            piva = col5.text_input("P.IVA")
+            descrizione = col6.text_input("Descrizione")
+            col7, col8 = st.columns(2)
+            importo_prev = col7.number_input("Importo Prev. (€)", min_value=0.0, step=100.0)
+            importo_contratto = col8.number_input("Importo Contratto (€)", min_value=0.0, step=100.0)
+            
+            if st.form_submit_button("Salva Cantiere"):
+                if cliente and indirizzo:
+                    data_dict = {
+                        "data": str(data), "n_prev": n_prev, "cliente": cliente, 
+                        "indirizzo": indirizzo, "piva": piva, "descrizione": descrizione, 
+                        "importo_prev": importo_prev, "importo_contratto": importo_contratto, "stato": "Attivo"
+                    }
+                    supabase.table("preventivi").insert(data_dict).execute()
+                    st.success("Cantiere inserito!"); st.rerun()
+                else:
+                    st.error("Cliente e Indirizzo sono obbligatori.")
+
+    st.divider()
+    try:
+        res = supabase.table("preventivi").select("*").execute()
+        df = pd.DataFrame(res.data)
+    except Exception as e:
+        st.error(f"Errore: {e}")
+        return
+    
+    if not df.empty:
+        df_display = df.copy()
+        if 'data' in df_display.columns:
+            df_display['data'] = df_display['data'].apply(formatta_data_italiana)
+        st.dataframe(df_display, use_container_width=True)
+        
+        st.subheader("Gestisci Cantiere Selezionato")
+        cantiere_sel = st.selectbox("Seleziona Cantiere:", df['id'].tolist(), format_func=lambda x: f"ID {x} - {df[df['id']==x]['indirizzo'].values[0]}", key="sel_cantiere")
+        
+        cantiere_data = df[df['id'] == cantiere_sel].iloc[0]
+        
+        col_az1, col_az2 = st.columns(2)
+        if cantiere_data.get('stato', 'Attivo') == 'Attivo':
+            if col_az1.button("🔴 Chiudi Cantiere", use_container_width=True, key="btn_chiudi_cant"):
+                supabase.table("preventivi").update({"stato": "Chiuso"}).eq("id", cantiere_sel).execute()
+                st.rerun()
+        else:
+            if col_az1.button("🟢 Riapri Cantiere", use_container_width=True, key="btn_riapri_cant"):
+                supabase.table("preventivi").update({"stato": "Attivo"}).eq("id", cantiere_sel).execute()
+                st.rerun()
+        
+        with col_az2:
+            if st.button("🗑️ Elimina Cantiere", type="primary", use_container_width=True, key="btn_elimina_cant"):
+                st.session_state.confirm_delete_cantiere = True
+        
+        if st.session_state.get('confirm_delete_cantiere'):
+            st.warning("Sei sicuro? Questa azione è irreversibile.")
+            if st.button("Sì, elimina definitivamente", key="btn_conferma_elimina_cant"):
+                supabase.table("preventivi").delete().eq("id", cantiere_sel).execute()
+                st.session_state.confirm_delete_cantiere = False
+                st.success("Cantiere eliminato."); st.rerun()
+
+        with st.expander("✏️ Modifica Dati Cantiere"):
+            with st.form("modifica_cantiere_form"):
+                m_cliente = st.text_input("Cliente", value=cantiere_data['cliente'])
+                m_indirizzo = st.text_input("Indirizzo", value=cantiere_data['indirizzo'])
+                m_descrizione = st.text_input("Descrizione", value=cantiere_data['descrizione'])
+                m_importo_prev = st.number_input("Importo Preventivo (€)", value=float(cantiere_data['importo_prev']))
+                m_importo = st.number_input("Importo Contratto (€)", value=float(cantiere_data['importo_contratto']))
+                
+                if st.form_submit_button("Salva Modifiche"):
+                    update_dict = {
+                        "cliente": m_cliente, "indirizzo": m_indirizzo, "descrizione": m_descrizione, 
+                        "importo_prev": m_importo_prev, "importo_contratto": m_importo
+                    }
+                    supabase.table("preventivi").update(update_dict).eq("id", cantiere_sel).execute()
+                    st.success("Modifiche salvate!"); st.rerun()
+    else:
+        st.info("Nessun cantiere presente.")
+
+def page_anagrafiche():
+    st.title("👥 Anagrafiche Operai, Fornitori e Categorie Spese")
+    tab1, tab2, tab3 = st.tabs(["Operai", "Fornitori", "Categorie Amministrative"])
+    
+    with tab1:
+        filtro_tipo_operaio = st.radio("Filtra per tipo:", ["Tutti", "Interno", "Esterno"], horizontal=True, key="filtro_tipo_operaio")
+        
+        with st.expander("➕ Nuovo Operaio"):
+            with st.form("nuovo_operaio", clear_on_submit=True):
+                nome = st.text_input("Nome Operaio")
+                ruolo = st.text_input("Ruolo")
+                tipo = st.selectbox("Tipo", ["Interno", "Esterno"])
+                costo = st.number_input("Costo Orario (€)", min_value=0.0, step=1.0)
+                if st.form_submit_button("Salva Operaio"):
+                    if nome:
+                        supabase.table("operai").insert({"nome": nome, "ruolo": ruolo, "costo_orario": costo, "tipo": tipo}).execute()
+                        st.success("Operaio aggiunto!"); st.rerun()
+        
+        try:
+            res = supabase.table("operai").select("*").execute()
+            df_op = pd.DataFrame(res.data)
+            if not df_op.empty and filtro_tipo_operaio != "Tutti":
+                df_op = df_op[df_op['tipo'] == filtro_tipo_operaio]
+        except:
+            df_op = pd.DataFrame()
+            
+        if not df_op.empty:
+            df_op_visual = df_op.rename(columns={'id': 'ID', 'nome': 'Nome', 'ruolo': 'Ruolo', 'costo_orario': 'Costo Orario', 'tipo': 'Tipo'})
+            st.dataframe(df_op_visual, use_container_width=True)
+        else:
+            st.info("Nessun operaio trovato per questo filtro.")
+        
+        if not df_op.empty:
+            st.subheader("Gestisci Operaio")
+            op_sel = st.selectbox("Seleziona Operaio", df_op['nome'].tolist(), key="sel_operaio")
+            op_data = df_op[df_op['nome'] == op_sel].iloc[0]
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                with st.form("modifica_operaio"):
+                    new_nome = st.text_input("Nome", value=op_data['nome'])
+                    new_ruolo = st.text_input("Ruolo", value=op_data['ruolo'])
+                    new_tipo = st.selectbox("Tipo", ["Interno", "Esterno"], index=0 if op_data['tipo'] == "Interno" else 1)
+                    new_costo = st.number_input("Costo Orario (€)", value=float(op_data['costo_orario']))
+                    if st.form_submit_button("Salva Modifiche"):
+                        supabase.table("operai").update({
+                            "nome": new_nome, "ruolo": new_ruolo, "costo_orario": new_costo, "tipo": new_tipo
+                        }).eq("nome", op_sel).execute()
+                        st.success("Modifiche salvate!"); st.rerun()
+            with col2:
+                if st.button("Elimina Operaio", type="primary", key="btn_elimina_operaio"):
+                    supabase.table("operai").delete().eq("nome", op_sel).execute()
+                    st.success("Operaio eliminato!"); st.rerun()
+
+    with tab2:
+        with st.expander("➕ Nuovo Fornitore"):
+            with st.form("nuovo_fornitore", clear_on_submit=True):
+                nome_f = st.text_input("Nome Fornitore")
+                piva_f = st.text_input("P.IVA")
+                contatto = st.text_input("Contatto")
+                if st.form_submit_button("Salva Fornitore"):
+                    if nome_f:
+                        supabase.table("fornitori").insert({"nome": nome_f, "piva": piva_f, "contatto": contatto}).execute()
+                        st.success("Fornitore aggiunto!"); st.rerun()
+        
+        try:
+            res = supabase.table("fornitori").select("*").execute()
+            df_forn = pd.DataFrame(res.data)
+        except:
+            df_forn = pd.DataFrame()
+            
+        st.dataframe(df_forn, use_container_width=True)
+        
+        if not df_forn.empty:
+            st.subheader("Gestisci Fornitore")
+            forn_sel = st.selectbox("Seleziona Fornitore", df_forn['nome'].tolist(), key="sel_fornitore")
+            forn_data = df_forn[df_forn['nome'] == forn_sel].iloc[0]
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                with st.form("modifica_fornitore"):
+                    new_piva = st.text_input("P.IVA", value=forn_data['piva'])
+                    new_contatto = st.text_input("Contatto", value=forn_data['contatto'])
+                    if st.form_submit_button("Salva Modifiche"):
+                        supabase.table("fornitori").update({"piva": new_piva, "contatto": new_contatto}).eq("nome", forn_sel).execute()
+                        st.success("Modifiche salvate!"); st.rerun()
+            with col2:
+                if st.button("Elimina Fornitore", type="primary", key="btn_elimina_fornitore"):
+                    supabase.table("fornitori").delete().eq("nome", forn_sel).execute()
+                    st.success("Fornitore eliminato!"); st.rerun()
+
+    with tab3:
+        with st.expander("➕ Nuova Categoria di Spesa"):
+            with st.form("nuova_categoria", clear_on_submit=True):
+                nome_cat = st.text_input("Nome Categoria (es. Commercialista, Elettricità)")
+                if st.form_submit_button("Salva Categoria"):
+                    if nome_cat:
+                        try:
+                            supabase.table("categorie_amministrative").insert({"nome": nome_cat}).execute()
+                            st.success("Categoria aggiunta!")
+                        except:
+                            st.error("Questa categoria esiste già.")
+                        st.rerun()
+        
+        try:
+            res = supabase.table("categorie_amministrative").select("*").execute()
+            df_cat = pd.DataFrame(res.data)
+        except:
+            df_cat = pd.DataFrame()
+            
+        st.dataframe(df_cat, use_container_width=True)
+        
+        if not df_cat.empty:
+            st.subheader("Gestisci Categoria")
+            cat_sel = st.selectbox("Seleziona Categoria", df_cat['nome'].tolist(), key="sel_categoria")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                with st.form("modifica_categoria"):
+                    new_nome = st.text_input("Nuovo Nome", value=cat_sel)
+                    if st.form_submit_button("Rinomina"):
+                        supabase.table("categorie_amministrative").update({"nome": new_nome}).eq("nome", cat_sel).execute()
+                        st.success("Categoria rinominata!"); st.rerun()
+            with col2:
+                if st.button("Elimina Categoria", type="primary", key="btn_elimina_categoria"):
+                    supabase.table("categorie_amministrative").delete().eq("nome", cat_sel).execute()
+                    st.success("Categoria eliminata!"); st.rerun()
+
+def page_utenti():
+    st.title("👤 Gestione Utenti")
+    st.write("Crea e gestisci gli account che possono accedere al gestionale.")
+    
+    with st.expander("➕ Nuovo Utente"):
+        with st.form("nuovo_utente", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            new_user = col1.text_input("Username")
+            new_pass = col2.text_input("Password", type="password")
+            is_admin_new = st.checkbox("Rendi questo utente Amministratore")
+            
+            if st.form_submit_button("Crea Utente"):
+                if new_user and new_pass:
+                    hashed_pw = hashlib.sha256(new_pass.encode()).hexdigest()
+                    try:
+                        supabase.table("users").insert({"username": new_user, "password_hash": hashed_pw, "is_admin": is_admin_new}).execute()
+                        st.success(f"Utente '{new_user}' creato con successo!")
+                    except:
+                        st.error("Questo username esiste già.")
+                else:
+                    st.error("Username e Password sono obbligatori.")
+    
+    st.subheader("👥 Utenti Registrati")
+    try:
+        res = supabase.table("users").select("username, is_admin").execute()
+        df_users = pd.DataFrame(res.data)
+    except:
+        df_users = pd.DataFrame()
+    
+    if not df_users.empty:
+        df_users_disp = df_users.copy()
+        df_users_disp['is_admin'] = df_users_disp['is_admin'].apply(lambda x: "Sì" if x else "No")
+        df_users_disp = df_users_disp.rename(columns={'username': 'Username', 'is_admin': 'Amministratore'})
+        st.dataframe(df_users_disp, use_container_width=True)
+        
+        st.subheader("Gestisci Utente")
+        user_sel = st.selectbox("Seleziona Utente", df_users['username'].tolist(), key="sel_user_gest")
+        
+        if user_sel == "admin":
+            st.info("L'utente 'admin' è l'amministratore principale e non può essere modificato o eliminato.")
+        else:
+            col1, col2 = st.columns(2)
+            with col1:
+                with st.form("modifica_utente"):
+                    new_password = st.text_input("Nuova Password (lascia vuoto per non cambiare)", type="password")
+                    new_admin_status = st.checkbox("Amministratore")
+                    
+                    if st.form_submit_button("Aggiorna Utente"):
+                        update_data = {"is_admin": new_admin_status}
+                        if new_password:
+                            update_data["password_hash"] = hashlib.sha256(new_password.encode()).hexdigest()
+                        supabase.table("users").update(update_data).eq("username", user_sel).execute()
+                        st.success("Utente aggiornato!"); st.rerun()
+            with col2:
+                if st.button("Elimina Utente", type="primary", key="btn_elimina_utente"):
+                    supabase.table("users").delete().eq("username", user_sel).execute()
+                    st.success("Utente eliminato!"); st.rerun()
+    else:
+        st.info("Nessun utente registrato.")
+
+def page_costi():
+    st.title("📉 Inserimento Costi")
+    
+    try:
+        df_cantieri = get_cantieri()
+        df_operai = get_operai()
+        df_fornitori = get_fornitori()
+    except:
+        st.error("Errore di connessione al database.")
+        return
+    
+    if df_cantieri.empty:
+        st.warning("Devi prima creare un cantiere!")
+        return
+
+    if "modifica_costo_attiva" not in st.session_state:
+        st.session_state.modifica_costo_attiva = False
+    if "costo_da_modificare" not in st.session_state:
+        st.session_state.costo_da_modificare = None
+
+    tab1, tab2, tab3 = st.tabs(["Costo Personale", "Costo Materiale", "Costo Amministrativo"])
+    
+    with tab1:
+        st.subheader("Registra Ore Lavorate")
+        col1, col2 = st.columns(2)
+        data_m = col1.date_input("Data", datetime.date.today(), format="DD/MM/YYYY", key="data_manodopera")
+        cantiere_m = col2.selectbox("Cantiere", df_cantieri['id'].tolist(), format_func=lambda x: df_cantieri[df_cantieri['id']==x]['indirizzo'].values[0], key="cant_manodopera")
+        
+        if not df_operai.empty:
+            col3, col4 = st.columns(2)
+            operai_options = [f"{row['nome']} ({row['tipo']})" for _, row in df_operai.iterrows()]
+            operaio_sel_str = col3.selectbox("Operaio", operai_options, key="op_manodopera")
+            operaio_sel = operaio_sel_str.split(" (")[0]
+            costo_standard = df_operai[df_operai['nome'] == operaio_sel]['costo_orario'].values[0]
+            
+            costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=float(costo_standard), key="costo_orario")
+            ore = st.number_input("Ore Lavorate", min_value=0.0, step=0.5, key="ore_lavorate")
+            descrizione_lavori = st.text_input("Descrizione Lavori Eseguiti", key="desc_lavori")
+            
+            if st.button("Salva Costo Personale", type="primary", key="btn_salva_manodopera"):
+                totale = ore * costo_orario
+                supabase.table("costo_manodopera").insert({
+                    "data": str(data_m), "cantiere_id": cantiere_m, "operaio": operaio_sel, 
+                    "descrizione": descrizione_lavori, "ore": ore, "costo_orario": costo_orario, "totale": totale
+                }).execute()
+                st.success("Costo personale registrato!"); st.rerun()
+        else:
+            st.info("Nessun operaio in anagrafica.")
+
+    with tab2:
+        with st.form("form_materiali", clear_on_submit=True):
+            st.subheader("Registra Acquisto Materiale")
+            col1, col2 = st.columns(2)
+            data_mat = col1.date_input("Data", datetime.date.today(), format="DD/MM/YYYY", key="data_materiale")
+            cantiere_mat = col2.selectbox("Cantiere", df_cantieri['id'].tolist(), format_func=lambda x: df_cantieri[df_cantieri['id']==x]['indirizzo'].values[0], key="cant_materiale")
+            
+            if not df_fornitori.empty:
+                col3, col4 = st.columns(2)
+                fornitore_sel = col3.selectbox("Fornitore", df_fornitori['nome'].tolist(), key="fornitore_materiale")
+                documento = col4.text_input("N. Documento / Fattura", key="documento_materiale")
+                col5, col6 = st.columns(2)
+                imponibile = col5.number_input("Imponibile (€)", min_value=0.0, step=10.0, key="imponibile")
+                iva = col6.number_input("Aliquota IVA (%)", min_value=0.0, value=22.0, step=1.0, key="iva_materiale")
+            else:
+                st.info("Nessun fornitore in anagrafica.")
+                fornitore_sel = None
+
+            if st.form_submit_button("Salva Costo Materiale"):
+                if fornitore_sel:
+                    totale = imponibile + (imponibile * iva / 100)
+                    supabase.table("costo_materiali").insert({
+                        "data": str(data_mat), "cantiere_id": cantiere_mat, "fornitore": fornitore_sel, 
+                        "documento": documento, "imponibile": imponibile, "iva": iva, "totale": totale
+                    }).execute()
+                    st.success("Costo materiale registrato!"); st.rerun()
+
+    with tab3:
+        st.subheader("Registra Costo Amministrativo")
+        try:
+            res_cat = supabase.table("categorie_amministrative").select("nome").execute()
+            df_cat = pd.DataFrame(res_cat.data)
+        except:
+            df_cat = pd.DataFrame()
+            
+        with st.form("form_amministrativo", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            data_amm = col1.date_input("Data", datetime.date.today(), format="DD/MM/YYYY", key="data_amm")
+            
+            if not df_cat.empty:
+                desc_amm = col2.selectbox("Categoria Spesa", df_cat['nome'].tolist(), key="desc_amm")
+            else:
+                st.warning("Nessuna categoria disponibile. Aggiungine una in 'Anagrafiche'.")
+                desc_amm = None
+            
+            importo_amm = st.number_input("Importo (€)", min_value=0.0, step=10.0, key="importo_amm")
+            
+            if st.form_submit_button("Salva Costo Amministrativo"):
+                if desc_amm and importo_amm > 0:
+                    supabase.table("costo_amministrativo").insert({"data": str(data_amm), "descrizione": desc_amm, "importo": importo_amm}).execute()
+                    st.success("Costo amministrativo registrato!"); st.rerun()
+
+    st.divider()
+
+    # Modifica Costi (Semplificata per Supabase)
+    if st.session_state.modifica_costo_attiva and st.session_state.costo_da_modificare:
+        id_unico = st.session_state.costo_da_modificare
+        tipo_costo = id_unico.split("-")[0]
+        real_id = int(id_unico.split("-")[1])
+        
+        with st.container():
+            st.subheader(f"✏️ Modifica Costo ID: {real_id}")
+            
+            if tipo_costo == "M":
+                res = supabase.table("costo_manodopera").select("*").eq("id", real_id).execute()
+                if res.data:
+                    row = res.data[0]
+                    with st.form("mod_man"):
+                        m_ore = st.number_input("Ore", value=float(row['ore']))
+                        m_costo = st.number_input("Costo Orario", value=float(row['costo_orario']))
+                        m_desc = st.text_input("Descrizione", value=row['descrizione'] or "")
+                        if st.form_submit_button("Salva"):
+                            supabase.table("costo_manodopera").update({"ore": m_ore, "costo_orario": m_costo, "descrizione": m_desc, "totale": m_ore*m_costo}).eq("id", real_id).execute()
+                            st.session_state.modifica_costo_attiva = False
+                            st.rerun()
+                        if st.form_submit_button("Elimina"):
+                            supabase.table("costo_manodopera").delete().eq("id", real_id).execute()
+                            st.session_state.modifica_costo_attiva = False
+                            st.rerun()
+            elif tipo_costo == "Mat":
+                res = supabase.table("costo_materiali").select("*").eq("id", real_id).execute()
+                if res.data:
+                    row = res.data[0]
+                    with st.form("mod_mat"):
+                        m_imp = st.number_input("Imponibile", value=float(row['imponibile']))
+                        m_iva = st.number_input("IVA %", value=float(row['iva']))
+                        if st.form_submit_button("Salva"):
+                            tot = m_imp + (m_imp*m_iva/100)
+                            supabase.table("costo_materiali").update({"imponibile": m_imp, "iva": m_iva, "totale": tot}).eq("id", real_id).execute()
+                            st.session_state.modifica_costo_attiva = False
+                            st.rerun()
+                        if st.form_submit_button("Elimina"):
+                            supabase.table("costo_materiali").delete().eq("id", real_id).execute()
+                            st.session_state.modifica_costo_attiva = False
+                            st.rerun()
+            elif tipo_costo == "Amm":
+                res = supabase.table("costo_amministrativo").select("*").eq("id", real_id).execute()
+                if res.data:
+                    row = res.data[0]
+                    with st.form("mod_amm"):
+                        m_imp = st.number_input("Importo", value=float(row['importo']))
+                        if st.form_submit_button("Salva"):
+                            supabase.table("costo_amministrativo").update({"importo": m_imp}).eq("id", real_id).execute()
+                            st.session_state.modifica_costo_attiva = False
+                            st.rerun()
+                        if st.form_submit_button("Elimina"):
+                            supabase.table("costo_amministrativo").delete().eq("id", real_id).execute()
+                            st.session_state.modifica_costo_attiva = False
+                            st.rerun()
+                            
+            if st.button("Annulla Modifica"):
+                st.session_state.modifica_costo_attiva = False
+                st.session_state.costo_da_modificare = None
+                st.rerun()
+
+    st.subheader("📋 Elenco Costi Registrati")
+    with st.expander("🔍 Filtra i costi", expanded=True):
+        col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+        filtro_tipo = col_f2.selectbox("Tipo di costo", ["Tutti", "Personale", "Materiale", "Amministrativo"])
+        data_inizio = col_f3.date_input("Dal", value=datetime.date.today().replace(month=1, day=1), format="DD/MM/YYYY")
+        data_fine = col_f4.date_input("Al", value=datetime.date.today(), format="DD/MM/YYYY")
+
+    # Scarica tutti i costi e unisce in Python
+    costi_list = []
+    try:
+        if filtro_tipo in ["Tutti", "Personale"]:
+            res = supabase.table("costo_manodopera").select("*").gte("data", str(data_inizio)).lte("data", str(data_fine)).execute()
+            for r in res.data:
+                costi_list.append({"ID_Unico": f"M-{r['id']}", "Tipo": "Personale", "Data": r['data'], "Cantiere": r['cantiere_id'], "Descrizione": r['operaio'] + " " + (r['descrizione'] or ""), "Totale": r['totale']})
+        if filtro_tipo in ["Tutti", "Materiale"]:
+            res = supabase.table("costo_materiali").select("*").gte("data", str(data_inizio)).lte("data", str(data_fine)).execute()
+            for r in res.data:
+                costi_list.append({"ID_Unico": f"Mat-{r['id']}", "Tipo": "Materiale", "Data": r['data'], "Cantiere": r['cantiere_id'], "Descrizione": r['fornitore'], "Totale": r['imponibile']})
+        if filtro_tipo in ["Tutti", "Amministrativo"]:
+            res = supabase.table("costo_amministrativo").select("*").gte("data", str(data_inizio)).lte("data", str(data_fine)).execute()
+            for r in res.data:
+                costi_list.append({"ID_Unico": f"Amm-{r['id']}", "Tipo": "Amministrativo", "Data": r['data'], "Cantiere": "Generale", "Descrizione": r['descrizione'], "Totale": r['importo']})
+    except Exception as e:
+        st.error(f"Errore caricamento costi: {e}")
+
+    if not costi_list:
+        st.info("Nessun costo trovato.")
+    else:
+        df_costi = pd.DataFrame(costi_list).sort_values("Data", ascending=False)
+        
+        # Mappa indirizzi cantiere
+        cant_map = {r['id']: r['indirizzo'] for r in df_cantieri.to_dict('records')}
+        df_costi['Cantiere'] = df_costi['Cantiere'].apply(lambda x: cant_map.get(x, x) if isinstance(x, int) else x)
+        
+        for index, row in df_costi.iterrows():
+            col_dati, col_btn = st.columns([8, 2])
+            with col_dati:
+                st.markdown(f"**{row['Tipo']}** | {formatta_data_italiana(row['Data'])} | {row['Cantiere']} | {row['Descrizione']} | **€ {row['Totale']:,.2f}**")
+            with col_btn:
+                if st.button("✏️ Modifica", key=f"mod_{row['ID_Unico']}"):
+                    st.session_state.modifica_costo_attiva = True
+                    st.session_state.costo_da_modificare = row['ID_Unico']
+                    st.rerun()
+        
+        st.divider()
+        st.markdown(f"### Totale dei costi filtrati: **€ {df_costi['Totale'].sum():,.2f}**")
+
+def page_incassi():
+    st.title("💰 Gestione Incassi")
+    df_cantieri = get_cantieri()
+    if df_cantieri.empty:
+        st.warning("Devi prima creare un cantiere!")
+        return
+
+    with st.expander("➕ Registra Nuovo Incasso"):
+        with st.form("nuovo_incasso", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            data_i = col1.date_input("Data Fattura", datetime.date.today(), format="DD/MM/YYYY", key="data_incasso")
+            cantiere_i = col2.selectbox("Cantiere", df_cantieri['id'].tolist(), format_func=lambda x: df_cantieri[df_cantieri['id']==x]['indirizzo'].values[0], key="cant_incasso")
+            
+            col3, col4, col5 = st.columns(3)
+            fattura = col3.text_input("N. Fattura", key="num_fattura")
+            imponibile = col4.number_input("Imponibile (€)", min_value=0.0, step=100.0, key="imp_incasso")
+            iva = col5.number_input("Aliquota IVA (%)", min_value=0.0, value=22.0, step=1.0, key="iva_incasso")
+            
+            if st.form_submit_button("Salva Incasso"):
+                totale = imponibile + (imponibile * iva / 100)
+                supabase.table("incassi").insert({
+                    "data": str(data_i), "cantiere_id": cantiere_i, "fattura": fattura, 
+                    "imponibile": imponibile, "iva": iva, "totale": totale
+                }).execute()
+                st.success("Incasso registrato!"); st.rerun()
+
+    st.divider()
+    try:
+        res = supabase.table("incassi").select("*").execute()
+        df = pd.DataFrame(res.data)
+        if not df.empty:
+            cant_map = {r['id']: r['indirizzo'] for r in df_cantieri.to_dict('records')}
+            df['Cantiere'] = df['cantiere_id'].apply(lambda x: cant_map.get(x, ""))
+            df['data'] = df['data'].apply(formatta_data_italiana)
+            st.dataframe(df[['id', 'data', 'Cantiere', 'fattura', 'imponibile', 'iva', 'totale']], use_container_width=True)
+            
+            st.subheader("Elimina Incasso")
+            incasso_sel = st.selectbox("Seleziona Incasso", df['id'].tolist(), format_func=lambda x: f"ID {x} - {df[df['id']==x]['fattura'].values[0]} - €{df[df['id']==x]['totale'].values[0]}", key="sel_incasso")
+            if st.button("Elimina Incasso Selezionato", type="primary", key="btn_elimina_incasso"):
+                supabase.table("incassi").delete().eq("id", incasso_sel).execute()
+                st.success("Incasso eliminato!"); st.rerun()
+    except Exception as e:
+        st.error(f"Errore: {e}")
+
+def page_avanzamento():
+    st.title("📈 Avanzamento Lavori (Calcolo Automatico)")
+    st.write("L'avanzamento lavori è calcolato in base agli incassi rispetto all'importo contrattuale.")
+    
+    try:
+        res_cant = supabase.table("preventivi").select("*").eq("stato", "Attivo").execute()
+        df = pd.DataFrame(res_cant.data)
+        
+        if df.empty:
+            st.info("Nessun cantiere attivo presente.")
+            return
+            
+        res_inc = supabase.table("incassi").select("cantiere_id, imponibile").execute()
+        df_inc = pd.DataFrame(res_inc.data)
+        
+        incassi_dict = df_inc.groupby('cantiere_id')['imponibile'].sum().to_dict() if not df_inc.empty else {}
+        
+        df['Totale_Incassato'] = df['id'].apply(lambda x: float(incassi_dict.get(x, 0)))
+        df['Percentuale'] = df.apply(lambda row: (row['Totale_Incassato'] / row['importo_contratto'] * 100) if row['importo_contratto'] > 0 else 0, axis=1)
+        
+        df_visual = df.copy()
+        df_visual['importo_contratto'] = df_visual['importo_contratto'].apply(lambda x: f"€ {x:,.2f}")
+        df_visual['Totale_Incassato'] = df_visual['Totale_Incassato'].apply(lambda x: f"€ {x:,.2f}")
+        df_visual['Percentuale'] = df_visual['Percentuale'].apply(lambda x: f"{x:.1f}%")
+        
+        st.dataframe(df_visual[['indirizzo', 'importo_contratto', 'Totale_Incassato', 'Percentuale']].rename(columns={'indirizzo':'Cantiere', 'importo_contratto':'Importo Contratto'}), use_container_width=True)
+        
+        st.divider()
+        st.subheader("Dettaglio Visivo")
+        for index, row in df.iterrows():
+            perc = (row['Totale_Incassato'] / row['importo_contratto'] * 100) if row['importo_contratto'] > 0 else 0
+            st.markdown(f"**{row['indirizzo']}** - {perc:.1f}%")
+            st.progress(min(perc / 100, 1.0))
+    except Exception as e:
+        st.error(f"Errore: {e}")
+
+def page_bilanci():
+    st.title("⚖️ Bilanci per Cantiere")
+    st.write("Conto economico sintetico per ogni cantiere: incassi, costi diretti e quota costi amministrativi ripartita in proporzione alle ore lavorate.")
+    
+    with st.expander("🔍 Filtri", expanded=True):
+        col1, col2, col3 = st.columns([1, 1, 1])
+        data_inizio = col1.date_input("Dal", value=datetime.date.today().replace(month=1, day=1), format="DD/MM/YYYY", key="bil_data_inizio")
+        data_fine = col2.date_input("Al", value=datetime.date.today(), format="DD/MM/YYYY", key="bil_data_fine")
+        includi_esterne = col3.checkbox("Includi operai esterni nel calcolo delle ore", value=True, key="bil_includi_esterne")
+    
+    if data_inizio > data_fine:
+        st.error("La data 'Dal' non può essere successiva alla data 'Al'.")
+        return
+    
+    try:
+        ripartizione = calcola_quote_amministrative(str(data_inizio), str(data_fine), includi_esterne)
+        quote_amm = ripartizione['quote']
+        tot_amm = ripartizione['tot_amm']
+        tot_amm_ripartito = ripartizione['tot_amm_ripartito']
+        tot_ore = ripartizione['tot_ore']
+        ore_per_cantiere = ripartizione['ore_per_cantiere']
+        
+        # Recupero incassi e costi
+        res_prev = supabase.table("preventivi").select("id, indirizzo, stato").execute()
+        df_cantieri = pd.DataFrame(res_prev.data)
+        
+        res_inc = supabase.table("incassi").select("cantiere_id, imponibile").gte("data", str(data_inizio)).lte("data", str(data_fine)).execute()
+        inc_dict = pd.DataFrame(res_inc.data).groupby('cantiere_id')['imponibile'].sum().to_dict() if res_inc.data else {}
+        
+        res_man = supabase.table("costo_manodopera").select("cantiere_id, totale").gte("data", str(data_inizio)).lte("data", str(data_fine)).execute()
+        man_dict = pd.DataFrame(res_man.data).groupby('cantiere_id')['totale'].sum().to_dict() if res_man.data else {}
+        
+        res_mat = supabase.table("costo_materiali").select("cantiere_id, imponibile").gte("data", str(data_inizio)).lte("data", str(data_fine)).execute()
+        mat_dict = pd.DataFrame(res_mat.data).groupby('cantiere_id')['imponibile'].sum().to_dict() if res_mat.data else {}
+        
+        # Costruisci tabella
+        righe = []
+        for _, cant in df_cantieri.iterrows():
+            cid = int(cant['id'])
+            inc = float(inc_dict.get(cid, 0))
+            pers = float(man_dict.get(cid, 0))
+            mat = float(mat_dict.get(cid, 0))
+            quota = float(quote_amm.get(cid, 0))
+            ore = float(ore_per_cantiere.get(cid, 0))
+            
+            # Includi solo cantieri con movimenti
+            if inc == 0 and pers == 0 and mat == 0 and quota == 0 and ore == 0:
                 continue
                 
-            # Converte eventuali valori NaN in None
-            df = df.where(pd.notnull(df), None)
-            dati = df.to_dict(orient="records")
+            costi_totali = pers + mat + quota
+            bilancio = inc - costi_totali
             
-            # 3. Inserisce a blocchi
-            for i in range(0, len(dati), 50):
-                blocco = dati[i:i+50]
-                supabase.table(t).insert(blocco).execute()
-                
-            report.append(f"✅ Tabella {t}: {len(dati)} righe importate")
+            righe.append({
+                'Cantiere': cant['indirizzo'], 'Stato': cant['stato'], 'Ore': ore,
+                'Incassi': inc, 'Costi Personale': pers, 'Costi Materiali': mat,
+                'Quota Amm.': quota, 'Costi Totali': costi_totali, 'Bilancio': bilancio,
+                'Margine %': (bilancio / inc * 100) if inc > 0 else 0
+            })
             
-        sqlite_conn.close()
-        return report
-    except Exception as e:
-        return [f"❌ Errore critico: {e}"]
-
-# --- INTERFACCIA ---
-st.title("🚚 Traghetto Dati (Migrazione Sicura)")
-st.write("Questa pagina carica i tuoi vecchi dati su Supabase. L'utente 'admin' non verrà toccato.")
-
-file_caricato = st.file_uploader("Carica il file di backup del database (.db)", type=["db"])
-
-if st.button("Avvia Migrazione", type="primary"):
-    if file_caricato is not None:
-        with open("temp_backup.db", "wb") as f:
-            f.write(file_caricato.getbuffer())
+        if not righe:
+            st.info("Nessun cantiere con movimenti nel periodo selezionato.")
+            return
+            
+        df_bilancio = pd.DataFrame(righe).sort_values('Bilancio', ascending=False)
         
-        with st.spinner("Trasferimento dati in corso..."):
-            risultati = migra_dati("temp_backup.db")
+        # Totali
+        tot_inc, tot_pers, tot_mat, tot_quota, tot_costi, tot_bilancio = df_bilancio['Incassi'].sum(), df_bilancio['Costi Personale'].sum(), df_bilancio['Costi Materiali'].sum(), df_bilancio['Quota Amm.'].sum(), df_bilancio['Costi Totali'].sum(), df_bilancio['Bilancio'].sum()
+        
+        st.markdown("### 📊 Sintesi del Periodo")
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Incassi", f"€ {tot_inc:,.2f}")
+        k2.metric("Costi Totali", f"€ {tot_costi:,.2f}", delta_color="inverse")
+        k3.metric("Bilancio", f"€ {tot_bilancio:,.2f}", delta_color="normal" if tot_bilancio >= 0 else "inverse")
+        k4.metric("Ore Totali", f"{df_bilancio['Ore'].sum():,.1f} h")
+        
+        st.divider()
+        
+        df_visual = df_bilancio.copy()
+        for col in ['Ore']: df_visual[col] = df_visual[col].apply(lambda x: f"{x:,.1f}")
+        for col in ['Incassi', 'Costi Personale', 'Costi Materiali', 'Quota Amm.', 'Costi Totali', 'Bilancio']: df_visual[col] = df_visual[col].apply(lambda x: f"€ {x:,.2f}")
+        df_visual['Margine %'] = df_visual['Margine %'].apply(lambda x: f"{x:.1f}%")
+        
+        st.dataframe(df_visual, use_container_width=True)
+        
+        st.info(f"💡 **Ripartizione costi amministrativi:** € {tot_amm:,.2f} totali, di cui € {tot_amm_ripartito:,.2f} ripartiti in base a {tot_ore:,.1f} ore.")
+        
+        st.divider()
+        st.subheader("📈 Bilancio per Cantiere (grafico)")
+        fig, ax = plt.subplots(figsize=(10, max(3, len(df_bilancio) * 0.5)))
+        bars = ax.barh(df_bilancio['Cantiere'], df_bilancio['Bilancio'], color=['#27AE60' if b >= 0 else '#E74C3C' for b in df_bilancio['Bilancio']])
+        ax.axvline(0, color='black', linewidth=0.8)
+        ax.grid(True, axis='x', linestyle='--', alpha=0.5)
+        for bar, val in zip(bars, df_bilancio['Bilancio']):
+            ax.text(val + (5 if val >= 0 else -5), bar.get_y() + bar.get_height()/2, f"€ {val:,.0f}", va='center', ha='left' if val >= 0 else 'right', fontsize=8)
+        max_v, min_v = max(df_bilancio['Bilancio']), min(df_bilancio['Bilancio'])
+        margine = (max_v - min_v) * 0.15 if (max_v - min_v) > 0 else 100
+        ax.set_xlim(min_v - margine, max_v + margine)
+        plt.tight_layout()
+        st.pyplot(fig)
+        
+    except Exception as e:
+        st.error(f"Errore nel calcolo bilanci: {e}")
+
+def page_riepilogo():
+    st.title("📊 Riepilogo e Grafici")
+    
+    st.subheader("📈 Andamento Economico Globale")
+    try:
+        df_cantieri = get_cantieri()
+        if df_cantieri.empty:
+            st.info("Nessun cantiere presente.")
+            return
             
-        st.success("Procedura completata!")
-        for r in risultati:
-            st.write(r)
-    else:
-        st.error("Devi prima caricare il file .db!")
+        res_inc = supabase.table("incassi").select("data, imponibile").execute()
+        res_man = supabase.table("costo_manodopera").select("data, totale").execute()
+        res_mat = supabase.table("costo_materiali").select("data, imponibile").execute()
+        
+        all_movs = []
+        if res_inc.data: all_movs.extend([{'data': r['data'], 'totale': r['imponibile'], 'Tipo': 'Incasso'} for r in res_inc.data])
+        if res_man.data: all_movs.extend([{'data': r['data'], 'totale': r['totale'], 'Tipo': 'Costo'} for r in res_man.data])
+        if res_mat.data: all_movs.extend([{'data': r['data'], 'totale': r['imponibile'], 'Tipo': 'Costo'} for r in res_mat.data])
+        
+        if not all_movs:
+            st.info("Nessun dato disponibile per il grafico.")
+        else:
+            df_mov = pd.DataFrame(all_movs)
+            df_mov['data'] = pd.to_datetime(df_mov['data'])
+            df_mov = df_mov.sort_values('data')
+            df_mov['Incassi Cum'] = df_mov.apply(lambda x: x['totale'] if x['Tipo'] == 'Incasso' else 0, axis=1).cumsum()
+            df_mov['Costi Cum'] = df_mov.apply(lambda x: x['totale'] if x['Tipo'] == 'Costo' else 0, axis=1).cumsum()
+            
+            fig, ax = plt.subplots(figsize=(10, 4))
+            ax.plot(df_mov['data'], df_mov['Incassi Cum'], label='Incassi', color='green', marker='o', linewidth=2)
+            ax.plot(df_mov['data'], df_mov['Costi Cum'], label='Costi', color='red', marker='x', linewidth=2)
+            ax.legend(); ax.grid(True, linestyle='--', alpha=0.6)
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y'))
+            plt.xticks(rotation=45); plt.tight_layout()
+            st.pyplot(fig)
+    except Exception as e:
+        st.error(f"Errore: {e}")
+
+# --- NAVIGAZIONE ---
+if not st.session_state.logged_in:
+    login_page()
+else:
+    with st.sidebar:
+        st.markdown(f"### 👤 Utente: {st.session_state.username}")
+        st.divider()
+        if st.button("🏠 Home", use_container_width=True, key="sidebar_home"):
+            st.session_state.current_page = "Home"; st.rerun()
+        if st.button("📋 Cantieri", use_container_width=True, key="sidebar_cantieri"):
+            st.session_state.current_page = "Cantieri"; st.rerun()
+        if st.button("👥 Anagrafiche", use_container_width=True, key="sidebar_anagrafiche"):
+            st.session_state.current_page = "Anagrafiche"; st.rerun()
+        if st.button("📉 Costi", use_container_width=True, key="sidebar_costi"):
+            st.session_state.current_page = "Costi"; st.rerun()
+        if st.button("💰 Incassi", use_container_width=True, key="sidebar_incassi"):
+            st.session_state.current_page = "Incassi"; st.rerun()
+        if st.button("📈 Avanzamento", use_container_width=True, key="sidebar_avanzamento"):
+            st.session_state.current_page = "Avanzamento"; st.rerun()
+        if st.button("📊 Riepilogo", use_container_width=True, key="sidebar_riepilogo"):
+            st.session_state.current_page = "Riepilogo"; st.rerun()
+        if st.button("⚖️ Bilanci", use_container_width=True, key="sidebar_bilanci"):
+            st.session_state.current_page = "Bilanci"; st.rerun()
+        
+        if st.session_state.is_admin:
+            if st.button("👤 Gestione Utenti", use_container_width=True, key="sidebar_utenti"):
+                st.session_state.current_page = "Utenti"; st.rerun()
+        
+        st.divider()
+        if st.button("🚪 Logout", type="primary", use_container_width=True, key="sidebar_logout"):
+            st.session_state.logged_in = False; st.session_state.is_admin = False; st.rerun()
+
+    if st.session_state.current_page == "Home": page_home()
+    elif st.session_state.current_page == "Cantieri": page_cantieri()
+    elif st.session_state.current_page == "Anagrafiche": page_anagrafiche()
+    elif st.session_state.current_page == "Costi": page_costi()
+    elif st.session_state.current_page == "Incassi": page_incassi()
+    elif st.session_state.current_page == "Avanzamento": page_avanzamento()
+    elif st.session_state.current_page == "Riepilogo": page_riepilogo()
+    elif st.session_state.current_page == "Bilanci": page_bilanci()
+    elif st.session_state.current_page == "Utenti" and st.session_state.is_admin: page_utenti()
