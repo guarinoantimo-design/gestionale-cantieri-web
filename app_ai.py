@@ -622,37 +622,133 @@ def page_incassi():
     st.title("💰 Gestione Incassi")
     df_cantieri = get_cantieri()
     if df_cantieri.empty:
-        st.warning("Devi prima creare un cantiere!"); return
+        st.warning("Devi prima creare un cantiere!")
+        return
+
+    # Gestione stato per la modifica
+    if "modifica_incasso_attiva" not in st.session_state:
+        st.session_state.modifica_incasso_attiva = False
+    if "incasso_da_modificare" not in st.session_state:
+        st.session_state.incasso_da_modificare = None
 
     with st.expander("➕ Registra Nuovo Incasso"):
         with st.form("nuovo_incasso", clear_on_submit=True):
             col1, col2 = st.columns(2)
             data_i = col1.date_input("Data Fattura", datetime.date.today(), format="DD/MM/YYYY", key="data_incasso")
             cantiere_i = col2.selectbox("Cantiere", df_cantieri['id'].tolist(), format_func=lambda x: df_cantieri[df_cantieri['id']==x]['indirizzo'].values[0], key="cant_incasso")
+            
             col3, col4, col5 = st.columns(3)
             fattura = col3.text_input("N. Fattura", key="num_fattura")
             imponibile = col4.number_input("Imponibile (€)", min_value=0.0, step=100.0, key="imp_incasso")
             iva = col5.number_input("Aliquota IVA (%)", min_value=0.0, value=22.0, step=1.0, key="iva_incasso")
+            
             if st.form_submit_button("Salva Incasso"):
                 totale = imponibile + (imponibile * iva / 100)
-                supabase.table("incassi").insert({"data": str(data_i), "cantiere_id": cantiere_i, "fattura": fattura, "imponibile": imponibile, "iva": iva, "totale": totale}).execute()
+                supabase.table("incassi").insert({
+                    "data": str(data_i), "cantiere_id": cantiere_i, "fattura": fattura, 
+                    "imponibile": imponibile, "iva": iva, "totale": totale
+                }).execute()
                 st.success("Incasso registrato!"); st.rerun()
 
     st.divider()
+
+    # --- FILTRI ---
+    with st.expander("🔍 Filtra gli incassi", expanded=True):
+        col_f1, col_f2, col_f3 = st.columns(3)
+        data_inizio_f = col_f1.date_input("Dal", value=datetime.date.today().replace(month=1, day=1), format="DD/MM/YYYY", key="inc_data_inizio")
+        data_fine_f = col_f2.date_input("Al", value=datetime.date.today(), format="DD/MM/YYYY", key="inc_data_fine")
+        
+        opzioni_cantieri = ["Tutti i cantieri"] + [f"{row['id']} - {row['indirizzo']}" for _, row in df_cantieri.iterrows()]
+        filtro_cantiere = col_f3.selectbox("Cantiere", opzioni_cantieri, key="inc_filtro_cantiere")
+
+    # --- MODULO DI MODIFICA ---
+    if st.session_state.modifica_incasso_attiva and st.session_state.incasso_da_modificare:
+        id_incasso = st.session_state.incasso_da_modificare
+        res_inc = supabase.table("incassi").select("*").eq("id", id_incasso).execute()
+        
+        if not res_inc.data:
+            st.warning("Questo incasso non esiste più. La modifica è stata annullata.")
+            st.session_state.modifica_incasso_attiva = False
+            st.session_state.incasso_da_modificare = None
+        else:
+            inc_data = res_inc.data[0]
+            st.subheader(f"✏️ Modifica Incasso ID: {id_incasso}")
+            
+            with st.form("form_modifica_incasso"):
+                col1, col2 = st.columns(2)
+                try: default_date = datetime.datetime.strptime(str(inc_data['data'])[:10], "%Y-%m-%d").date()
+                except: default_date = datetime.date.today()
+                
+                m_data = col1.date_input("Data Fattura", value=default_date, format="DD/MM/YYYY")
+                idx_cant = df_cantieri['id'].tolist().index(inc_data['cantiere_id']) if inc_data['cantiere_id'] in df_cantieri['id'].tolist() else 0
+                m_cantiere = col2.selectbox("Cantiere", df_cantieri['id'].tolist(), index=idx_cant, format_func=lambda x: df_cantieri[df_cantieri['id']==x]['indirizzo'].values[0])
+                
+                col3, col4, col5 = st.columns(3)
+                m_fattura = col3.text_input("N. Fattura", value=inc_data['fattura'])
+                m_imponibile = col4.number_input("Imponibile (€)", value=float(inc_data['imponibile']), step=100.0)
+                m_iva = col5.number_input("Aliquota IVA (%)", value=float(inc_data['iva']), step=1.0)
+                
+                col_btn1, col_btn2, col_btn3 = st.columns(3)
+                if col_btn1.form_submit_button("Salva Modifiche", type="primary"):
+                    nuovo_totale = m_imponibile + (m_imponibile * m_iva / 100)
+                    supabase.table("incassi").update({
+                        "data": str(m_data), "cantiere_id": m_cantiere, "fattura": m_fattura,
+                        "imponibile": m_imponibile, "iva": m_iva, "totale": nuovo_totale
+                    }).eq("id", id_incasso).execute()
+                    st.session_state.modifica_incasso_attiva = False
+                    st.session_state.incasso_da_modificare = None
+                    st.success("Incasso aggiornato!"); st.rerun()
+                    
+                if col_btn2.form_submit_button("Elimina Incasso", type="secondary"):
+                    supabase.table("incassi").delete().eq("id", id_incasso).execute()
+                    st.session_state.modifica_incasso_attiva = False
+                    st.session_state.incasso_da_modificare = None
+                    st.success("Incasso eliminato!"); st.rerun()
+                    
+                if col_btn3.form_submit_button("Annulla"):
+                    st.session_state.modifica_incasso_attiva = False
+                    st.session_state.incasso_da_modificare = None
+                    st.rerun()
+            st.divider()
+
+    # --- ELENCO INCASSI CON FILTRI ---
     try:
-        res = supabase.table("incassi").select("*").execute()
+        res = supabase.table("incassi").select("*").gte("data", str(data_inizio_f)).lte("data", str(data_fine_f)).execute()
         df = pd.DataFrame(res.data)
-        if not df.empty:
-            cant_map = {r['id']: r['indirizzo'] for r in df_cantieri.to_dict('records')}
-            df['Cantiere'] = df['cantiere_id'].apply(lambda x: cant_map.get(x, ""))
-            df['data'] = df['data'].apply(formatta_data_italiana)
-            st.dataframe(df[['id', 'data', 'Cantiere', 'fattura', 'imponibile', 'iva', 'totale']], use_container_width=True)
-            st.subheader("Elimina Incasso")
-            incasso_sel = st.selectbox("Seleziona Incasso", df['id'].tolist(), format_func=lambda x: f"ID {x} - {df[df['id']==x]['fattura'].values[0]} - €{df[df['id']==x]['totale'].values[0]}", key="sel_incasso")
-            if st.button("Elimina Incasso Selezionato", type="primary", key="btn_elimina_incasso"):
-                supabase.table("incassi").delete().eq("id", incasso_sel).execute()
-                st.success("Incasso eliminato!"); st.rerun()
-    except Exception as e: st.error(f"Errore: {e}")
+    except Exception as e:
+        st.error(f"Errore caricamento incassi: {e}")
+        return
+
+    if df.empty:
+        st.info("Nessun incasso trovato nel periodo selezionato.")
+    else:
+        cant_map = {r['id']: r['indirizzo'] for r in df_cantieri.to_dict('records')}
+        df['Cantiere'] = df['cantiere_id'].apply(lambda x: cant_map.get(x, "Sconosciuto"))
+        
+        # Applica filtro cantiere
+        if filtro_cantiere != "Tutti i cantieri":
+            cid_filtro = int(filtro_cantiere.split(" - ")[0])
+            df = df[df['cantiere_id'] == cid_filtro]
+            
+        if df.empty:
+            st.info("Nessun incasso trovato con questi filtri.")
+        else:
+            df = df.sort_values("data", ascending=False)
+            
+            # Visualizzazione a righe per avere il tasto Modifica
+            for _, row in df.iterrows():
+                col_dati, col_btn = st.columns([8, 2])
+                with col_dati:
+                    data_it = formatta_data_italiana(row['data'])
+                    st.markdown(f"**{data_it}** | {row['Cantiere']} | Fattura: **{row['fattura']}** | Imponibile: € {row['imponibile']:,.2f} | IVA: {row['iva']}% | **Totale: € {row['totale']:,.2f}**")
+                with col_btn:
+                    if st.button("✏️ Modifica", key=f"mod_inc_{row['id']}"):
+                        st.session_state.modifica_incasso_attiva = True
+                        st.session_state.incasso_da_modificare = row['id']
+                        st.rerun()
+            
+            st.divider()
+            st.markdown(f"### Totale Incassi Filtrati: **€ {df['totale'].sum():,.2f}** (Imponibile: € {df['imponibile'].sum():,.2f})")
 
 def page_avanzamento():
     st.title("📈 Avanzamento Lavori (Calcolo Automatico)")
