@@ -485,7 +485,8 @@ def page_costi():
             importo_amm = st.number_input("Importo (€)", min_value=0.0, step=10.0, key="importo_amm")
             if st.form_submit_button("Salva Costo Amministrativo"):
                 if desc_amm and importo_amm > 0:
-                    supabase.table("costo_amministrativo").insert({"data": str(data_amm), "descrizione": desc_amm, "importo": importo_amm}).execute()
+                    data_formattata = data_amm.strftime('%Y-%m-%d')
+                    supabase.table("costo_amministrativo").insert({"data": data_formattata, "descrizione": desc_amm, "importo": importo_amm}).execute()
                     st.success("Costo amministrativo registrato!"); st.rerun()
 
     st.divider()
