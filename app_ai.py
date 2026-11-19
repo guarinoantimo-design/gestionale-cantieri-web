@@ -442,7 +442,8 @@ def page_costi():
             descrizione_lavori = st.text_input("Descrizione Lavori Eseguiti", key="desc_lavori")
             if st.button("Salva Costo Personale", type="primary", key="btn_salva_manodopera"):
                 totale = ore * costo_orario
-                supabase.table("costo_manodopera").insert({"data": str(data_m), "cantiere_id": cantiere_m, "operaio": operaio_sel, "descrizione": descrizione_lavori, "ore": ore, "costo_orario": costo_orario, "totale": totale}).execute()
+                data_formattata = data_m.strftime('%Y-%m-%d')
+                supabase.table("costo_manodopera").insert({"data": data_formattata, "cantiere_id": cantiere_m, "operaio": operaio_sel, "descrizione": descrizione_lavori, "ore": ore, "costo_orario": costo_orario, "totale": totale}).execute()
                 st.success("Costo personale registrato!"); st.rerun()
         else: st.info("Nessun operaio in anagrafica.")
 
@@ -465,7 +466,8 @@ def page_costi():
             if st.form_submit_button("Salva Costo Materiale"):
                 if fornitore_sel:
                     totale = imponibile + (imponibile * iva / 100)
-                    supabase.table("costo_materiali").insert({"data": str(data_mat), "cantiere_id": cantiere_mat, "fornitore": fornitore_sel, "documento": documento, "imponibile": imponibile, "iva": iva, "totale": totale}).execute()
+                    data_formattata = data_mat.strftime('%Y-%m-%d')
+                    supabase.table("costo_materiali").insert({"data": data_formattata, "cantiere_id": cantiere_mat, "fornitore": fornitore_sel, "documento": documento, "imponibile": imponibile, "iva": iva, "totale": totale}).execute()
                     st.success("Costo materiale registrato!"); st.rerun()
 
     with tab3:
