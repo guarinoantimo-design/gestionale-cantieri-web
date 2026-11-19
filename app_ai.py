@@ -1,12 +1,12 @@
 import streamlit as st
 import pandas as pd
 import datetime
-import io
 import hashlib
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import io
 
 # Librerie per il PDF con gestione testo
 from reportlab.lib.pagesizes import A4, landscape
@@ -604,7 +604,7 @@ def page_costi():
                     data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Totale (€)"]]
                     for _, row in df_costi.iterrows():
                         data_rows.append([row['Tipo'], formatta_data_italiana(row['Data']), Paragraph(row['Cantiere'], style_cell), Paragraph(row['Descrizione'], style_cell), f"{row['Totale']:,.2f}"])
-                    data_rows.append(["", "", "", "TOTALE GENERALE", f"€ {totale_filtrato:,.2f}"])
+                    data_rows.append(["", "", "", "TOTALE GENERALE", f"{totale_filtrato:,.2f}"])
                     
                     t = Table(data_rows, colWidths=[80, 70, 180, 200, 80], repeatRows=1)
                     t.setStyle(TableStyle([
@@ -629,7 +629,6 @@ def page_incassi():
         st.warning("Devi prima creare un cantiere!")
         return
 
-    # Gestione stato per la modifica
     if "modifica_incasso_attiva" not in st.session_state:
         st.session_state.modifica_incasso_attiva = False
     if "incasso_da_modificare" not in st.session_state:
@@ -648,15 +647,15 @@ def page_incassi():
             
             if st.form_submit_button("Salva Incasso"):
                 totale = imponibile + (imponibile * iva / 100)
+                data_formattata = data_i.strftime('%Y-%m-%d')
                 supabase.table("incassi").insert({
-                    "data": str(data_i), "cantiere_id": cantiere_i, "fattura": fattura, 
+                    "data": data_formattata, "cantiere_id": cantiere_i, "fattura": fattura, 
                     "imponibile": imponibile, "iva": iva, "totale": totale
                 }).execute()
                 st.success("Incasso registrato!"); st.rerun()
 
     st.divider()
 
-    # --- FILTRI ---
     with st.expander("🔍 Filtra gli incassi", expanded=True):
         col_f1, col_f2, col_f3 = st.columns(3)
         data_inizio_f = col_f1.date_input("Dal", value=datetime.date.today().replace(month=1, day=1), format="DD/MM/YYYY", key="inc_data_inizio")
@@ -665,7 +664,6 @@ def page_incassi():
         opzioni_cantieri = ["Tutti i cantieri"] + [f"{row['id']} - {row['indirizzo']}" for _, row in df_cantieri.iterrows()]
         filtro_cantiere = col_f3.selectbox("Cantiere", opzioni_cantieri, key="inc_filtro_cantiere")
 
-    # --- MODULO DI MODIFICA ---
     if st.session_state.modifica_incasso_attiva and st.session_state.incasso_da_modificare:
         id_incasso = st.session_state.incasso_da_modificare
         res_inc = supabase.table("incassi").select("*").eq("id", id_incasso).execute()
@@ -695,8 +693,9 @@ def page_incassi():
                 col_btn1, col_btn2, col_btn3 = st.columns(3)
                 if col_btn1.form_submit_button("Salva Modifiche", type="primary"):
                     nuovo_totale = m_imponibile + (m_imponibile * m_iva / 100)
+                    data_formattata = m_data.strftime('%Y-%m-%d')
                     supabase.table("incassi").update({
-                        "data": str(m_data), "cantiere_id": m_cantiere, "fattura": m_fattura,
+                        "data": data_formattata, "cantiere_id": m_cantiere, "fattura": m_fattura,
                         "imponibile": m_imponibile, "iva": m_iva, "totale": nuovo_totale
                     }).eq("id", id_incasso).execute()
                     st.session_state.modifica_incasso_attiva = False
@@ -715,7 +714,6 @@ def page_incassi():
                     st.rerun()
             st.divider()
 
-    # --- ELENCO INCASSI CON FILTRI ---
     try:
         res = supabase.table("incassi").select("*").gte("data", str(data_inizio_f)).lte("data", str(data_fine_f)).execute()
         df = pd.DataFrame(res.data)
@@ -729,7 +727,6 @@ def page_incassi():
         cant_map = {r['id']: r['indirizzo'] for r in df_cantieri.to_dict('records')}
         df['Cantiere'] = df['cantiere_id'].apply(lambda x: cant_map.get(x, "Sconosciuto"))
         
-        # Applica filtro cantiere
         if filtro_cantiere != "Tutti i cantieri":
             cid_filtro = int(filtro_cantiere.split(" - ")[0])
             df = df[df['cantiere_id'] == cid_filtro]
@@ -738,8 +735,6 @@ def page_incassi():
             st.info("Nessun incasso trovato con questi filtri.")
         else:
             df = df.sort_values("data", ascending=False)
-            
-            # Visualizzazione a righe per avere il tasto Modifica
             for _, row in df.iterrows():
                 col_dati, col_btn = st.columns([8, 2])
                 with col_dati:
@@ -830,16 +825,16 @@ def page_bilanci():
         st.subheader("📈 Bilancio per Cantiere (grafico)")
         fig, ax = plt.subplots(figsize=(10, max(3, len(df_bilancio) * 0.5)))
         bars = ax.barh(df_bilancio['Cantiere'], df_bilancio['Bilancio'], color=['#27AE60' if b >= 0 else '#E74C3C' for b in df_bilancio['Bilancio']])
-        ax.axvline(0, color='black', linewidth=0.8); ax.grid(True, axis='x', linestyle='--', alpha=0.5)for bar, val in zip(bars, df_bilancio['Bilancio']):
-        ax.text(val + (5 if val >= 0 else -5), bar.get_y() + bar.get_height()/2, f"€ {val:,.0f}", va='center', ha='left' if val >= 0 else 'right', fontsize=8)
+        ax.axvline(0, color='black', linewidth=0.8); ax.grid(True, axis='x', linestyle='--', alpha=0.5)
+        for bar, val in zip(bars, df_bilancio['Bilancio']):
+            ax.text(val + (5 if val >= 0 else -5), bar.get_y() + bar.get_height()/2, f"€ {val:,.0f}", va='center', ha='left' if val >= 0 else 'right', fontsize=8)
         max_v, min_v = max(df_bilancio['Bilancio']), min(df_bilancio['Bilancio']); margine = (max_v - min_v) * 0.15 if (max_v - min_v) > 0 else 100
         ax.set_xlim(min_v - margine, max_v + margine); plt.tight_layout(); st.pyplot(fig)
         st.divider()
         
-                st.subheader("📄 Esporta Bilancio in PDF")
+        st.subheader("📄 Esporta Bilancio in PDF")
         if st.button("📄 Genera PDF Bilancio", type="primary", key="btn_export_bilanci_pdf"):
             try:
-                # 1. Salviamo il grafico corrente come immagine temporanea
                 img_buffer = io.BytesIO()
                 fig.savefig(img_buffer, format='png', bbox_inches='tight', dpi=150)
                 img_buffer.seek(0)
@@ -854,7 +849,6 @@ def page_bilanci():
                 elements.append(Paragraph(f"Bilancio Cantieri dal {formatta_data_italiana(data_inizio)} al {formatta_data_italiana(data_fine)}", styles['Title']))
                 elements.append(Spacer(1, 12))
                 
-                # Tabella
                 data_rows = [["Cantiere", "Stato", "Ore", "Incassi (€)", "Pers. (€)", "Mat. (€)", "Quota Amm. (€)", "Costi Tot. (€)", "Bilancio (€)", "Marg. %"]]
                 for _, r in df_bilancio.iterrows():
                     data_rows.append([Paragraph(r['Cantiere'], style_cell), r['Stato'], f"{r['Ore']:,.1f}", Paragraph(f"{r['Incassi']:,.2f}", style_num), Paragraph(f"{r['Costi Personale']:,.2f}", style_num), Paragraph(f"{r['Costi Materiali']:,.2f}", style_num), Paragraph(f"{r['Quota Amm.']:,.2f}", style_num), Paragraph(f"{r['Costi Totali']:,.2f}", style_num), Paragraph(f"{r['Bilancio']:,.2f}", style_num), f"{r['Margine %']:.1f}%"])
@@ -863,17 +857,12 @@ def page_bilanci():
                 
                 t = Table(data_rows, colWidths=[140, 45, 40, 65, 65, 65, 65, 65, 65, 45], repeatRows=1)
                 style_cmds = [('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke), ('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'), ('FONTSIZE', (0, 0), (-1, 0), 8), ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#BDC3C7")), ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'), ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor("#ECF0F1"))]
-                
                 for i, (_, r) in enumerate(df_bilancio.iterrows(), start=1):
                     style_cmds.append(('BACKGROUND', (8, i), (8, i), colors.HexColor("#D5F4E6") if r['Bilancio'] >= 0 else colors.HexColor("#FADBD8")))
-                t.setStyle(TableStyle(style_cmds))
-                elements.append(t)
-                
+                t.setStyle(TableStyle(style_cmds)); elements.append(t)
                 elements.append(Spacer(1, 20))
                 
-                # 2. Inseriamo il grafico nel PDF
-                from reportlab.platypus import Image
-                # Ridimensioniamo il grafico per farlo stare nella pagina A4 landscape
+                # Inserimento Immagine
                 img = Image(img_buffer, width=700, height=280)
                 elements.append(img)
                 
@@ -884,6 +873,8 @@ def page_bilanci():
                 st.success(f"PDF generato: {filename}")
                 with open(filename, "rb") as f: st.download_button("⬇️ Scarica il PDF", data=f, file_name=filename, mime="application/pdf")
             except Exception as e: st.error(f"Errore PDF: {e}")
+    except Exception as e: st.error(f"Errore nel calcolo bilanci: {e}")
+
 def page_riepilogo():
     st.title("📊 Riepilogo e Grafici")
     st.subheader("📋 Report Costi Dettagliato")
@@ -961,7 +952,7 @@ def page_riepilogo():
                 data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Importo (€)"]]
                 for _, r in df_report.iterrows():
                     data_rows.append([r['Tipo'], formatta_data_italiana(r['Data']), Paragraph(str(r['Cantiere']), style_cell), Paragraph(str(r['Descrizione']), style_cell), f"{r['Importo']:,.2f}"])
-                data_rows.append(["", "", "", "TOTALE GENERALE", f"€ {totale_importo:,.2f}"])
+                data_rows.append(["", "", "", "TOTALE GENERALE", f"{totale_importo:,.2f}"])
                 
                 t = Table(data_rows, colWidths=[80, 70, 180, 200, 80], repeatRows=1)
                 t.setStyle(TableStyle([
