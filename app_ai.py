@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import datetime
+import io
 import hashlib
 import matplotlib
 matplotlib.use('Agg')
@@ -10,7 +11,7 @@ import matplotlib.dates as mdates
 # Librerie per il PDF con gestione testo
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 # Nuova libreria per Supabase
@@ -836,9 +837,14 @@ def page_bilanci():
         ax.set_xlim(min_v - margine, max_v + margine); plt.tight_layout(); st.pyplot(fig)
         st.divider()
         
-        st.subheader("📄 Esporta Bilancio in PDF")
+                st.subheader("📄 Esporta Bilancio in PDF")
         if st.button("📄 Genera PDF Bilancio", type="primary", key="btn_export_bilanci_pdf"):
             try:
+                # 1. Salviamo il grafico corrente come immagine temporanea
+                img_buffer = io.BytesIO()
+                fig.savefig(img_buffer, format='png', bbox_inches='tight', dpi=150)
+                img_buffer.seek(0)
+
                 filename = f"Bilancio_Cantieri_{datetime.date.today()}.pdf"
                 doc = SimpleDocTemplate(filename, pagesize=landscape(A4))
                 elements = []
@@ -849,24 +855,36 @@ def page_bilanci():
                 elements.append(Paragraph(f"Bilancio Cantieri dal {formatta_data_italiana(data_inizio)} al {formatta_data_italiana(data_fine)}", styles['Title']))
                 elements.append(Spacer(1, 12))
                 
+                # Tabella
                 data_rows = [["Cantiere", "Stato", "Ore", "Incassi (€)", "Pers. (€)", "Mat. (€)", "Quota Amm. (€)", "Costi Tot. (€)", "Bilancio (€)", "Marg. %"]]
                 for _, r in df_bilancio.iterrows():
                     data_rows.append([Paragraph(r['Cantiere'], style_cell), r['Stato'], f"{r['Ore']:,.1f}", Paragraph(f"{r['Incassi']:,.2f}", style_num), Paragraph(f"{r['Costi Personale']:,.2f}", style_num), Paragraph(f"{r['Costi Materiali']:,.2f}", style_num), Paragraph(f"{r['Quota Amm.']:,.2f}", style_num), Paragraph(f"{r['Costi Totali']:,.2f}", style_num), Paragraph(f"{r['Bilancio']:,.2f}", style_num), f"{r['Margine %']:.1f}%"])
+                
                 data_rows.append([Paragraph("<b>TOTALE</b>", style_cell), "", f"{tot_ore_tab:,.1f}", Paragraph(f"<b>{tot_inc:,.2f}</b>", style_num), Paragraph(f"<b>{tot_pers:,.2f}</b>", style_num), Paragraph(f"<b>{tot_mat:,.2f}</b>", style_num), Paragraph(f"<b>{tot_quota:,.2f}</b>", style_num), Paragraph(f"<b>{tot_costi:,.2f}</b>", style_num), Paragraph(f"<b>{tot_bilancio:,.2f}</b>", style_num), f"{(tot_bilancio / tot_inc * 100) if tot_inc > 0 else 0:.1f}%"])
                 
                 t = Table(data_rows, colWidths=[140, 45, 40, 65, 65, 65, 65, 65, 65, 45], repeatRows=1)
                 style_cmds = [('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke), ('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'), ('FONTSIZE', (0, 0), (-1, 0), 8), ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#BDC3C7")), ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'), ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor("#ECF0F1"))]
+                
                 for i, (_, r) in enumerate(df_bilancio.iterrows(), start=1):
                     style_cmds.append(('BACKGROUND', (8, i), (8, i), colors.HexColor("#D5F4E6") if r['Bilancio'] >= 0 else colors.HexColor("#FADBD8")))
-                t.setStyle(TableStyle(style_cmds)); elements.append(t)
-                elements.append(Spacer(1, 16))
+                t.setStyle(TableStyle(style_cmds))
+                elements.append(t)
+                
+                elements.append(Spacer(1, 20))
+                
+                # 2. Inseriamo il grafico nel PDF
+                from reportlab.platypus import Image
+                # Ridimensioniamo il grafico per farlo stare nella pagina A4 landscape
+                img = Image(img_buffer, width=700, height=280)
+                elements.append(img)
+                
+                elements.append(Spacer(1, 12))
                 elements.append(Paragraph(f"<b>Nota:</b> € {tot_amm_ripartito:,.2f} di costi amministrativi ripartiti su {tot_ore:,.1f} ore.", styles['Normal']))
+                
                 doc.build(elements)
                 st.success(f"PDF generato: {filename}")
                 with open(filename, "rb") as f: st.download_button("⬇️ Scarica il PDF", data=f, file_name=filename, mime="application/pdf")
             except Exception as e: st.error(f"Errore PDF: {e}")
-    except Exception as e: st.error(f"Errore nel calcolo bilanci: {e}")
-
 def page_riepilogo():
     st.title("📊 Riepilogo e Grafici")
     st.subheader("📋 Report Costi Dettagliato")
