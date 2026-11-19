@@ -832,7 +832,7 @@ def page_bilanci():
         bars = ax.barh(df_bilancio['Cantiere'], df_bilancio['Bilancio'], color=['#27AE60' if b >= 0 else '#E74C3C' for b in df_bilancio['Bilancio']])
         ax.axvline(0, color='black', linewidth=0.8); ax.grid(True, axis='x', linestyle='--', alpha=0.5)
         for bar, val in zip(bars, df_bilancio['Bilancio']):
-            ax.text(val + (5 if val >= 0 else -5), bar.get_y() + bar.get_height()/2, f"€ {val:,.0f}", va='center', ha='left' if val >= 0 else 'right', fontsize=8)
+        ax.text(val + (5 if val >= 0 else -5), bar.get_y() + bar.get_height()/2, f"€ {val:,.0f}", va='center', ha='left' if val >= 0 else 'right', fontsize=8)
         max_v, min_v = max(df_bilancio['Bilancio']), min(df_bilancio['Bilancio']); margine = (max_v - min_v) * 0.15 if (max_v - min_v) > 0 else 100
         ax.set_xlim(min_v - margine, max_v + margine); plt.tight_layout(); st.pyplot(fig)
         st.divider()
