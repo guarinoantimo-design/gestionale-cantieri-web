@@ -434,39 +434,47 @@ def page_costi():
         col1, col2 = st.columns(2)
         data_m = col1.date_input("Data", datetime.date.today(), format="DD/MM/YYYY", key="data_manodopera")
         cantiere_m = col2.selectbox("Cantiere", df_cantieri['id'].tolist(), format_func=lambda x: df_cantieri[df_cantieri['id']==x]['indirizzo'].values[0], key="cant_manodopera")
+        
         if not df_operai.empty:
             col3, col4 = st.columns(2)
             lista_nomi_operai = df_operai['nome'].tolist()
             operaio_sel = col3.selectbox("Operaio", lista_nomi_operai, key="op_manodopera")
-            costo_standard = df_operai[df_operai['nome'] == operaio_sel]['costo_orario'].values[0]
-            costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=float(costo_standard), key="costo_orario")
-            ore = st.number_input("Ore Lavorate", min_value=0.0, step=0.5, key="ore_lavorate")
-            descrizione_lavori = st.text_input("Descrizione Lavori Eseguiti", key="desc_lavori")
-                        if st.button("Salva Costo Personale", type="primary", key="btn_salva_manodopera"):
-                if ore > 0 and costo_orario >= 0:
-                    totale = float(ore) * float(costo_orario)
-                    data_formattata = data_m.strftime('%Y-%m-%d')
-                    
-                    dati_da_salvare = {
-                        "data": data_formattata, 
-                        "cantiere_id": int(cantiere_m), 
-                        "operaio": str(operaio_sel), 
-                        "descrizione": str(descrizione_lavori) if descrizione_lavori else "", 
-                        "ore": round(float(ore), 2), 
-                        "costo_orario": round(float(costo_orario), 2), 
-                        "totale": round(totale, 2)
-                    }
-                    try:
-                        supabase.table("costo_manodopera").insert(dati_da_salvare).execute()
-                        st.success("Costo personale registrato!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Errore durante il salvataggio: {e}")
-                        st.write("Dati inviati al database:", dati_da_salvare)
+            
+            if operaio_sel:
+                match_operaio = df_operai[df_operai['nome'] == operaio_sel]
+                if not match_operaio.empty:
+                    costo_standard = match_operaio['costo_orario'].values[0]
+                    costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=float(costo_standard), key="costo_orario")
                 else:
-                    st.error("Inserisci almeno un'ora e un costo orario valido.")
+                    costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=0.0, key="costo_orario")
+                    
+                ore = st.number_input("Ore Lavorate", min_value=0.0, step=0.5, key="ore_lavorate")
+                descrizione_lavori = st.text_input("Descrizione Lavori Eseguiti", key="desc_lavori")
+                
+                if st.button("Salva Costo Personale", type="primary", key="btn_salva_manodopera"):
+                    if ore > 0:
+                        totale = float(ore) * float(costo_orario)
+                        data_formattata = data_m.strftime('%Y-%m-%d')
+                        
+                        dati_da_salvare = {
+                            "data": data_formattata, 
+                            "cantiere_id": int(cantiere_m), 
+                            "operaio": str(operaio_sel), 
+                            "descrizione": str(descrizione_lavori) if descrizione_lavori else "", 
+                            "ore": round(float(ore), 2), 
+                            "costo_orario": round(float(costo_orario), 2), 
+                            "totale": round(totale, 2)
+                        }
+                        try:
+                            supabase.table("costo_manodopera").insert(dati_da_salvare).execute()
+                            st.success("Costo personale registrato!"); st.rerun()
+                        except Exception as e:
+                            st.error(f"Errore durante il salvataggio: {e}")
+                            st.write("Dati inviati al database:", dati_da_salvare)
+                    else:
+                        st.error("Inserisci almeno un'ora.")
         else: 
-            st.info("Nessun operaio in anagrafica.")
+            st.info("Nessun operaio in anagrafica. Aggiungine uno dalla pagina 'Anagrafiche'.")
 
     with tab2:
         with st.form("form_materiali", clear_on_submit=True):
@@ -649,10 +657,8 @@ def page_incassi():
         st.warning("Devi prima creare un cantiere!")
         return
 
-    if "modifica_incasso_attiva" not in st.session_state:
-        st.session_state.modifica_incasso_attiva = False
-    if "incasso_da_modificare" not in st.session_state:
-        st.session_state.incasso_da_modificare = None
+    if "modifica_incasso_attiva" not in st.session_state: st.session_state.modifica_incasso_attiva = False
+    if "incasso_da_modificare" not in st.session_state: st.session_state.incasso_da_modificare = None
 
     with st.expander("➕ Registra Nuovo Incasso"):
         with st.form("nuovo_incasso", clear_on_submit=True):
@@ -882,7 +888,6 @@ def page_bilanci():
                 t.setStyle(TableStyle(style_cmds)); elements.append(t)
                 elements.append(Spacer(1, 20))
                 
-                # Inserimento Immagine
                 img = Image(img_buffer, width=700, height=280)
                 elements.append(img)
                 
