@@ -442,12 +442,31 @@ def page_costi():
             costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=float(costo_standard), key="costo_orario")
             ore = st.number_input("Ore Lavorate", min_value=0.0, step=0.5, key="ore_lavorate")
             descrizione_lavori = st.text_input("Descrizione Lavori Eseguiti", key="desc_lavori")
-            if st.button("Salva Costo Personale", type="primary", key="btn_salva_manodopera"):
-                totale = ore * costo_orario
-                data_formattata = data_m.strftime('%Y-%m-%d')
-                supabase.table("costo_manodopera").insert({"data": data_formattata, "cantiere_id": cantiere_m, "operaio": operaio_sel, "descrizione": descrizione_lavori, "ore": ore, "costo_orario": costo_orario, "totale": totale}).execute()
-                st.success("Costo personale registrato!"); st.rerun()
-        else: st.info("Nessun operaio in anagrafica.")
+                        if st.button("Salva Costo Personale", type="primary", key="btn_salva_manodopera"):
+                if ore > 0 and costo_orario >= 0:
+                    totale = float(ore) * float(costo_orario)
+                    data_formattata = data_m.strftime('%Y-%m-%d')
+                    
+                    dati_da_salvare = {
+                        "data": data_formattata, 
+                        "cantiere_id": int(cantiere_m), 
+                        "operaio": str(operaio_sel), 
+                        "descrizione": str(descrizione_lavori) if descrizione_lavori else "", 
+                        "ore": round(float(ore), 2), 
+                        "costo_orario": round(float(costo_orario), 2), 
+                        "totale": round(totale, 2)
+                    }
+                    try:
+                        supabase.table("costo_manodopera").insert(dati_da_salvare).execute()
+                        st.success("Costo personale registrato!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Errore durante il salvataggio: {e}")
+                        st.write("Dati inviati al database:", dati_da_salvare)
+                else:
+                    st.error("Inserisci almeno un'ora e un costo orario valido.")
+        else: 
+            st.info("Nessun operaio in anagrafica.")
 
     with tab2:
         with st.form("form_materiali", clear_on_submit=True):
