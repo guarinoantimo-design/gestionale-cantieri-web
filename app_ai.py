@@ -436,7 +436,8 @@ def page_costi():
         cantiere_m = col2.selectbox("Cantiere", df_cantieri['id'].tolist(), format_func=lambda x: df_cantieri[df_cantieri['id']==x]['indirizzo'].values[0], key="cant_manodopera")
         if not df_operai.empty:
             col3, col4 = st.columns(2)
-            operaio_sel = col3.selectbox("Operaio", [f"{row['nome']} ({row['tipo']})" for _, row in df_operai.iterrows()], key="op_manodopera").split(" (")[0]
+            lista_nomi_operai = df_operai['nome'].tolist()
+            operaio_sel = col3.selectbox("Operaio", lista_nomi_operai, key="op_manodopera")
             costo_standard = df_operai[df_operai['nome'] == operaio_sel]['costo_orario'].values[0]
             costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=float(costo_standard), key="costo_orario")
             ore = st.number_input("Ore Lavorate", min_value=0.0, step=0.5, key="ore_lavorate")
