@@ -438,17 +438,17 @@ def page_costi():
         if not df_operai.empty:
             col3, col4 = st.columns(2)
             lista_nomi_operai = df_operai['nome'].tolist()
+                            lista_nomi_operai = df_operai['nome'].tolist()
             operaio_sel = col3.selectbox("Operaio", lista_nomi_operai, key="op_manodopera")
             
             if operaio_sel:
                 match_operaio = df_operai[df_operai['nome'] == operaio_sel]
                 if not match_operaio.empty:
                     costo_standard = match_operaio['costo_orario'].values[0]
-                    costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=float(costo_standard), key="costo_orario")
+                    # Usiamo una chiave dinamica che cambia in base all'operaio selezionato!
+                    costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=float(costo_standard), key=f"costo_orario_{operaio_sel}")
                 else:
-                    costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=0.0, key="costo_orario")
-                    
-                ore = st.number_input("Ore Lavorate", min_value=0.0, step=0.5, key="ore_lavorate")
+                    costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=0.0, key=f"costo_orario_vuoto")
                 descrizione_lavori = st.text_input("Descrizione Lavori Eseguiti", key="desc_lavori")
                 
                 if st.button("Salva Costo Personale", type="primary", key="btn_salva_manodopera"):
