@@ -1149,18 +1149,27 @@ def page_stampe():
                     style_cell = ParagraphStyle('cell_style', parent=styles['Normal'], fontSize=7, leading=9, alignment=0)
                     style_num = ParagraphStyle('num_style', parent=styles['Normal'], fontSize=7, leading=9, alignment=2)
                     
+                    # --- INTESTAZIONE DEL REPORT ---
                     elements.append(Paragraph(f"Report Personalizzato dal {formatta_data_italiana(s_data_ini)} al {formatta_data_italiana(s_data_fin)}", styles['Title']))
-                    elements.append(Paragraph(f"Cantiere: {s_cantiere} | Tipologia: {s_tipo}", styles['Normal']))
+                    elements.append(Spacer(1, 6))
+                    elements.append(Paragraph(f"<b>Cantiere:</b> {s_cantiere}", styles['Heading3']))
+                    elements.append(Paragraph(f"<b>Tipologia Costo:</b> {s_tipo}", styles['Normal']))
                     elements.append(Spacer(1, 12))
                     
-                    # --- TABELLA DETTAGLIO (Pagina 1) ---
+                    # --- TABELLA DI DETTAGLIO ---
                     data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Importo (€)"]]
                     for _, r in df_rep.iterrows():
-                        data_rows.append([r['Tipo'], formatta_data_italiana(r['Data']), Paragraph(str(r['Cantiere']), style_cell), Paragraph(str(r['Descrizione']), style_cell), Paragraph(f"{r['Importo']:,.2f}", style_num)])
+                        data_rows.append([
+                            Paragraph(str(r['Tipo']), style_cell), 
+                            formatta_data_italiana(r['Data']), 
+                            Paragraph(str(r['Cantiere']), style_cell), 
+                            Paragraph(str(r['Descrizione']), style_cell), 
+                            Paragraph(f"{r['Importo']:,.2f}", style_num)
+                        ])
                     
                     data_rows.append(["", "", "", "TOTALE GENERALE", f"{tot_report:,.2f}"])
                     
-                    t = Table(data_rows, colWidths=[80, 60, 160, 250, 90], repeatRows=1)
+                    t = Table(data_rows, colWidths=[90, 60, 140, 230, 80], repeatRows=1)
                     t.setStyle(TableStyle([
                         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
                         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -1174,13 +1183,12 @@ def page_stampe():
                     ]))
                     elements.append(t)
                     
-                    # Nuova pagina per il riepilogo a matrice
+                    # --- PAGINA 2: MATRICE DI RIEPILOGO ---
                     elements.append(PageBreak())
                     
                     elements.append(Paragraph("<b>Riepilogo Costi per Categoria</b>", styles['Heading2']))
                     elements.append(Spacer(1, 12))
                     
-                    # Calcolo valori
                     def somma_se_contiene(df, parole):
                         mask = df['Tipo'].apply(lambda x: any(p in x.lower().replace('.', '') for p in parole))
                         return df[mask]['Importo'].sum()
@@ -1191,11 +1199,9 @@ def page_stampe():
                     tot_inail = somma_se_contiene(df_rep, ['inail'])
                     tot_cassa = somma_se_contiene(df_rep, ['cassa'])
                     
-                    # Recuperiamo il totale amministrativo complessivo filtrato
                     tot_tutti_amm = df_rep[~df_rep['Tipo'].isin(['Operai', 'Materiale'])]['Importo'].sum()
                     tot_altri_amm = tot_tutti_amm - (tot_inps + tot_inail + tot_cassa)
 
-                    # Intestazione della matrice (con testo a capo e grassetto corretto)
                     matrix_data = [
                         [
                             "", 
@@ -1206,7 +1212,6 @@ def page_stampe():
                         ]
                     ]
                     
-                    # Righe della matrice
                     matrix_data.append(["Operai", f"€ {tot_operai:,.2f}", "", "", ""])
                     matrix_data.append(["INPS", "", f"€ {tot_inps:,.2f}", "", ""])
                     matrix_data.append(["INAIL", "", f"€ {tot_inail:,.2f}", "", ""])
@@ -1225,9 +1230,7 @@ def page_stampe():
                     
                     matrix_data.append(["Totale Generale", f"€ {tot_report:,.2f}", "", "", ""])
 
-                    # Creazione tabella con larghezze ottimizzate
                     t_matrix = Table(matrix_data, colWidths=[120, 130, 130, 90, 110])
-                    
                     style_matrix = [
                         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#BDC3C7")),
                         ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
@@ -1256,7 +1259,6 @@ def page_stampe():
                     with open(filename, "rb") as f: st.download_button("⬇️ Scarica il PDF", data=f, file_name=filename, mime="application/pdf")
             except Exception as e:
                 st.error(f"Errore generazione report: {e}")
-
 
 # --- NAVIGAZIONE ---
 if not st.session_state.logged_in:
