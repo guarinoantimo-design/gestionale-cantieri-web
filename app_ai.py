@@ -1075,7 +1075,14 @@ def page_stampe():
         except:
             lista_categorie = []
             
-        opzioni_tipologia = ["Tutti", "Solo Operai"] + [f"Solo {cat}" for cat in lista_categorie] + ["Operai + Tutte le Categorie Amm."]
+        # Nuove opzioni aggiunte
+        opzioni_tipologia = [
+            "Tutti", 
+            "Solo Operai", 
+            "Solo Materiale", 
+            "Operai + Materiali", 
+            "Operai + Materiali + Tutte le Categorie Amm."
+        ] + [f"Solo {cat}" for cat in lista_categorie]
         
         s_tipo = col_s4.selectbox("Tipologia Costo", opzioni_tipologia, key="st_tipo")
         
@@ -1085,6 +1092,7 @@ def page_stampe():
                 tot_report = 0.0
                 
                 res_man = supabase.table("costo_manodopera").select("*").gte("data", str(s_data_ini)).lte("data", str(s_data_fin)).execute()
+                res_mat = supabase.table("costo_materiali").select("*").gte("data", str(s_data_ini)).lte("data", str(s_data_fin)).execute()
                 res_amm = supabase.table("costo_amministrativo").select("*").gte("data", str(s_data_ini)).lte("data", str(s_data_fin)).execute()
                 
                 quota_amm_cantiere = 0.0
@@ -1093,18 +1101,25 @@ def page_stampe():
                     ripartizione = calcola_quote_amministrative(str(s_data_ini), str(s_data_fin), includi_esterne=True)
                     quota_amm_cantiere = ripartizione['quote'].get(cid_selezionato, 0.0)
 
-                # Filtro Operai
-                if s_tipo in ["Tutti", "Solo Operai", "Operai + Tutte le Categorie Amm."]:
+                # 1. Filtro Operai
+                if "Operai" in s_tipo or s_tipo == "Tutti":
                     for r in res_man.data:
                         if s_cantiere != "Tutti i cantieri" and str(r['cantiere_id']) != s_cantiere.split(" - ")[0]: continue
                         tot_report += float(r['totale'])
                         report_data.append({"Tipo": "Operai", "Data": r['data'], "Cantiere": cant_map.get(r['cantiere_id'], r['cantiere_id']), "Descrizione": f"{r['operaio']} - {r['descrizione']}", "Importo": r['totale']})
 
-                # Filtro Categorie Amministrative
+                # 2. Filtro Materiali
+                if "Material" in s_tipo or s_tipo == "Tutti":
+                    for r in res_mat.data:
+                        if s_cantiere != "Tutti i cantieri" and str(r['cantiere_id']) != s_cantiere.split(" - ")[0]: continue
+                        tot_report += float(r['imponibile'])
+                        report_data.append({"Tipo": "Materiale", "Data": r['data'], "Cantiere": cant_map.get(r['cantiere_id'], r['cantiere_id']), "Descrizione": r['fornitore'], "Importo": r['imponibile']})
+
+                # 3. Filtro Categorie Amministrative
                 cat_da_cercare = []
-                if s_tipo == "Operai + Tutte le Categorie Amm.":
+                if s_tipo == "Operai + Materiali + Tutte le Categorie Amm." or s_tipo == "Tutti":
                     cat_da_cercare = lista_categorie
-                elif s_tipo.startswith("Solo ") and s_tipo != "Solo Operai":
+                elif s_tipo.startswith("Solo ") and s_tipo != "Solo Operai" and s_tipo != "Solo Materiale":
                     cat_da_cercare = [s_tipo.replace("Solo ", "")]
 
                 if cat_da_cercare:
