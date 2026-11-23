@@ -1052,6 +1052,7 @@ def page_riepilogo():
 
 def page_stampe():
     from reportlab.platypus import PageBreak
+    import base64
     
     st.title("🖨️ Stampe e Report Personalizzati")
     st.write("Genera un report specifico filtrando per periodo, cantiere e tipologia di costo.")
@@ -1088,7 +1089,7 @@ def page_stampe():
         
         s_tipo = col_s4.selectbox("Tipologia Costo", opzioni_tipologia, key="st_tipo")
         
-        if st.button("🖨️ Genera PDF Personalizzato", type="primary"):
+        if st.button("🖨️ Genera Anteprima PDF", type="primary"):
             try:
                 report_data = []
                 tot_report = 0.0
@@ -1139,24 +1140,29 @@ def page_stampe():
                                 report_data.append({"Tipo": r['descrizione'], "Data": r['data'], "Cantiere": "Generale", "Descrizione": r['descrizione'], "Importo": r['importo']})
                 
                 if not report_data:
-                    st.info("Nessun dato trovato per questa combinazione di filtri.")
+                    st.warning("Nessun dato trovato per questa combinazione di filtri.")
                 else:
                     df_rep = pd.DataFrame(report_data).sort_values("Data")
-                    filename = f"Report_Personalizzato_{datetime.date.today()}.pdf"
-                    doc = SimpleDocTemplate(filename, pagesize=landscape(A4))
+                    
+                    # Creiamo un buffer in memoria invece di un file su disco
+                    pdf_buffer = io.BytesIO()
+                    doc = SimpleDocTemplate(pdf_buffer, pagesize=landscape(A4))
                     elements = []
                     styles = getSampleStyleSheet()
                     style_cell = ParagraphStyle('cell_style', parent=styles['Normal'], fontSize=7, leading=9, alignment=0)
                     style_num = ParagraphStyle('num_style', parent=styles['Normal'], fontSize=7, leading=9, alignment=2)
                     
-                    # --- INTESTAZIONE DEL REPORT ---
-                    elements.append(Paragraph(f"Report Personalizzato dal {formatta_data_italiana(s_data_ini)} al {formatta_data_italiana(s_data_fin)}", styles['Title']))
-                    elements.append(Spacer(1, 6))
-                    elements.append(Paragraph(f"<b>Cantiere:</b> {s_cantiere}", styles['Heading3']))
-                    elements.append(Paragraph(f"<b>Tipologia Costo:</b> {s_tipo}", styles['Normal']))
-                    elements.append(Spacer(1, 12))
-                    
+                    # --- FUNZIONE PER L'INTESTAZIONE A PIÈ DI PAGINA ---
+                    def intestazione_pagina(canvas, doc):
+                        canvas.saveState()
+                        canvas.setFont('Helvetica', 8)
+                        canvas.setFillColor(colors.grey)
+                        testo_pie = f"Cantiere: {s_cantiere}  |  Tipologia: {s_tipo}  |  Pagina {doc.page}"
+                        canvas.drawString(30, 20, testo_pie)
+                        canvas.restoreState()
+
                     # --- TABELLA DI DETTAGLIO ---
+                    # (Rimossa l'intestazione manuale, ora è nel piè di pagina)
                     data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Importo (€)"]]
                     for _, r in df_rep.iterrows():
                         data_rows.append([
@@ -1254,9 +1260,27 @@ def page_stampe():
                     t_matrix.setStyle(TableStyle(style_matrix))
                     elements.append(t_matrix)
                     
-                    doc.build(elements)
-                    st.success(f"PDF generato: {filename}")
-                    with open(filename, "rb") as f: st.download_button("⬇️ Scarica il PDF", data=f, file_name=filename, mime="application/pdf")
+                    # Genera il PDF passando la funzione di intestazione
+                    doc.build(elements, onFirstPage=intestazione_pagina, onLaterPages=intestazione_pagina)
+                    
+                    # Prepariamo il PDF per l'anteprima
+                    pdf_buffer.seek(0)
+                    base64_pdf = base64.b64encode(pdf_buffer.read()).decode('utf-8')
+                    pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="600" type="application/pdf"></iframe>'
+                    
+                    st.success("Anteprima generata! Controlla qui sotto prima di scaricare.")
+                    st.markdown(pdf_display, unsafe_allow_html=True)
+                    
+                    # Pulsante di download (usa un nuovo buffer perché quello di prima è stato consumato per l'anteprima)
+                    pdf_buffer.seek(0)
+                    st.download_button(
+                        label="⬇️ Scarica il PDF",
+                        data=pdf_buffer,
+                        file_name=f"Report_Personalizzato_{datetime.date.today()}.pdf",
+                        mime="application/pdf",
+                        key="dl_pdf_finale"
+                    )
+
             except Exception as e:
                 st.error(f"Errore generazione report: {e}")
 
