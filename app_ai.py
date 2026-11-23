@@ -1181,7 +1181,7 @@ def page_stampe():
                     tot_inail = df_rep[df_rep['Tipo'].str.contains('inail', case=False, na=False)]['Importo'].sum()
                     tot_cassa = df_rep[df_rep['Tipo'].str.contains('cassa', case=False, na=False)]['Importo'].sum()
                     
-                    # Altri costi amministrativi = Totale amministrativo - (INPS + INAIL + Cassa)
+                    # Altri costi amministrativi = Totale amministrativo - (I.N.P.S. + I.N.A.I.L. + Cassa)
                     tot_tutti_amm = df_rep[~df_rep['Tipo'].isin(['Operai', 'Materiale'])]['Importo'].sum()
                     tot_altri_amm = tot_tutti_amm - (tot_inps + tot_inail + tot_cassa)
                     
