@@ -1028,37 +1028,50 @@ def page_riepilogo():
         
         col_s3, col_s4 = st.columns(2)
         s_cantiere = col_s3.selectbox("Cantiere", opzioni_cantieri, key="st_cantiere")
-        s_tipo = col_s4.selectbox("Tipologia Costo", ["Tutti", "Solo Operai", "Solo INPS/INAIL/Cassa Edile", "Operai + INPS/INAIL/Cassa Edile"], key="st_tipo")
+        
+        # Recuperiamo le categorie direttamente dal database per evitare problemi di testo
+        try:
+            res_cat = supabase.table("categorie_amministrative").select("nome").execute()
+            lista_categorie = [c['nome'] for c in res_cat.data]
+        except:
+            lista_categorie = []
+            
+        opzioni_tipologia = ["Tutti", "Solo Operai"] + [f"Solo {cat}" for cat in lista_categorie] + ["Operai + Tutte le Categorie Amm."]
+        
+        s_tipo = col_s4.selectbox("Tipologia Costo", opzioni_tipologia, key="st_tipo")
         
         if st.button("🖨️ Genera PDF Personalizzato", type="primary"):
             try:
                 report_data = []
                 tot_report = 0.0
                 
-                # Estrazione dati per il report personalizzato
                 res_man = supabase.table("costo_manodopera").select("*").gte("data", str(s_data_ini)).lte("data", str(s_data_fin)).execute()
                 res_amm = supabase.table("costo_amministrativo").select("*").gte("data", str(s_data_ini)).lte("data", str(s_data_fin)).execute()
                 
-                # Calcolo delle quote amministrative se è selezionato un cantiere
                 quota_amm_cantiere = 0.0
                 if s_cantiere != "Tutti i cantieri":
                     cid_selezionato = int(s_cantiere.split(" - ")[0])
                     ripartizione = calcola_quote_amministrative(str(s_data_ini), str(s_data_fin), includi_esterne=True)
                     quota_amm_cantiere = ripartizione['quote'].get(cid_selezionato, 0.0)
 
-                if s_tipo in ["Tutti", "Solo Operai", "Operai + INPS/INAIL/Cassa Edile"]:
+                # Filtro Operai
+                if s_tipo in ["Tutti", "Solo Operai", "Operai + Tutte le Categorie Amm."]:
                     for r in res_man.data:
                         if s_cantiere != "Tutti i cantieri" and str(r['cantiere_id']) != s_cantiere.split(" - ")[0]: continue
                         tot_report += float(r['totale'])
                         report_data.append({"Tipo": "Operai", "Data": r['data'], "Cantiere": cant_map.get(r['cantiere_id'], r['cantiere_id']), "Descrizione": f"{r['operaio']} - {r['descrizione']}", "Importo": r['totale']})
 
-                if s_tipo in ["Tutti", "Solo INPS/INAIL/Cassa Edile", "Operai + INPS/INAIL/Cassa Edile"]:
-                    parole_chiave = ["inps", "inail", "cassa edile", "cassa"]
+                # Filtro Categorie Amministrative
+                cat_da_cercare = []
+                if s_tipo == "Operai + Tutte le Categorie Amm.":
+                    cat_da_cercare = lista_categorie
+                elif s_tipo.startswith("Solo ") and s_tipo != "Solo Operai":
+                    cat_da_cercare = [s_tipo.replace("Solo ", "")]
+
+                if cat_da_cercare:
                     for r in res_amm.data:
-                        desc_lower = r['descrizione'].lower()
-                        if any(p in desc_lower for p in parole_chiave):
+                        if r['descrizione'] in cat_da_cercare:
                             if s_cantiere != "Tutti i cantieri":
-                                # Ripartizione proporzionale del singolo costo sul totale amministrativo
                                 tot_costi_amm = sum(float(x['importo']) for x in res_amm.data)
                                 if tot_costi_amm > 0 and quota_amm_cantiere > 0:
                                     proporzione_costo = float(r['importo']) / tot_costi_amm
