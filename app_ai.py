@@ -1049,6 +1049,8 @@ def page_riepilogo():
     except Exception as e: st.error(f"Errore nel grafico: {e}")
 
 def page_stampe():
+    from reportlab.platypus import PageBreak
+    
     st.title("🖨️ Stampe e Report Personalizzati")
     st.write("Genera un report specifico filtrando per periodo, cantiere e tipologia di costo.")
     
@@ -1068,7 +1070,6 @@ def page_stampe():
         col_s3, col_s4 = st.columns(2)
         s_cantiere = col_s3.selectbox("Cantiere", opzioni_cantieri, key="st_cantiere")
         
-        # Recuperiamo le categorie direttamente dal database
         try:
             res_cat = supabase.table("categorie_amministrative").select("nome").execute()
             lista_categorie = [c['nome'] for c in res_cat.data]
@@ -1100,25 +1101,25 @@ def page_stampe():
                     ripartizione = calcola_quote_amministrative(str(s_data_ini), str(s_data_fin), includi_esterne=True)
                     quota_amm_cantiere = ripartizione['quote'].get(cid_selezionato, 0.0)
 
-                # 1. Filtro Operai
+                # 1. Operai
                 if "Operai" in s_tipo or s_tipo == "Tutti":
                     for r in res_man.data:
                         if s_cantiere != "Tutti i cantieri" and str(r['cantiere_id']) != s_cantiere.split(" - ")[0]: continue
                         tot_report += float(r['totale'])
                         report_data.append({"Tipo": "Operai", "Data": r['data'], "Cantiere": cant_map.get(r['cantiere_id'], r['cantiere_id']), "Descrizione": f"{r['operaio']} - {r['descrizione']}", "Importo": r['totale']})
 
-                # 2. Filtro Materiali
+                # 2. Materiali
                 if "Material" in s_tipo or s_tipo == "Tutti":
                     for r in res_mat.data:
                         if s_cantiere != "Tutti i cantieri" and str(r['cantiere_id']) != s_cantiere.split(" - ")[0]: continue
                         tot_report += float(r['imponibile'])
                         report_data.append({"Tipo": "Materiale", "Data": r['data'], "Cantiere": cant_map.get(r['cantiere_id'], r['cantiere_id']), "Descrizione": r['fornitore'], "Importo": r['imponibile']})
 
-                # 3. Filtro Categorie Amministrative
+                # 3. Categorie Amministrative
                 cat_da_cercare = []
                 if s_tipo == "Operai + Materiali + Tutte le Categorie Amm." or s_tipo == "Tutti":
                     cat_da_cercare = lista_categorie
-                elif s_tipo.startswith("Solo ") and s_tipo != "Solo Operai" and s_tipo != "Solo Materiale":
+                elif s_tipo.startswith("Solo ") and s_tipo not in ["Solo Operai", "Solo Materiale"]:
                     cat_da_cercare = [s_tipo.replace("Solo ", "")]
 
                 if cat_da_cercare:
@@ -1143,49 +1144,54 @@ def page_stampe():
                     doc = SimpleDocTemplate(filename, pagesize=landscape(A4))
                     elements = []
                     styles = getSampleStyleSheet()
-                    style_cell = ParagraphStyle('cell_style', parent=styles['Normal'], fontSize=8, leading=10, alignment=0)
+                    style_cell = ParagraphStyle('cell_style', parent=styles['Normal'], fontSize=7, leading=9, alignment=0)
+                    style_num = ParagraphStyle('num_style', parent=styles['Normal'], fontSize=7, leading=9, alignment=2)
                     
                     elements.append(Paragraph(f"Report Personalizzato dal {formatta_data_italiana(s_data_ini)} al {formatta_data_italiana(s_data_fin)}", styles['Title']))
                     elements.append(Paragraph(f"Cantiere: {s_cantiere} | Tipologia: {s_tipo}", styles['Normal']))
                     elements.append(Spacer(1, 12))
                     
+                    # Tabella principale con font ridotto per far stare più righe
                     data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Importo (€)"]]
                     for _, r in df_rep.iterrows():
-                        data_rows.append([r['Tipo'], formatta_data_italiana(r['Data']), Paragraph(str(r['Cantiere']), style_cell), Paragraph(str(r['Descrizione']), style_cell), f"{r['Importo']:,.2f}"])
+                        data_rows.append([r['Tipo'], formatta_data_italiana(r['Data']), Paragraph(str(r['Cantiere']), style_cell), Paragraph(str(r['Descrizione']), style_cell), Paragraph(f"{r['Importo']:,.2f}", style_num)])
                     
                     data_rows.append(["", "", "", "TOTALE GENERALE", f"{tot_report:,.2f}"])
                     
-                    t = Table(data_rows, colWidths=[80, 70, 180, 200, 80], repeatRows=1)
+                    t = Table(data_rows, colWidths=[80, 60, 160, 250, 90], repeatRows=1)
                     t.setStyle(TableStyle([
                         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
                         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
                         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0, 0), (-1, 0), 8),
                         ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#F4F6F7")),
-                        ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#BDC3C7")),
+                        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#BDC3C7")),
                         ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
                     ]))
                     elements.append(t)
                     
-                    # --- Riepilogo per Voce Personalizzato ---
-                    elements.append(Spacer(1, 20))
-                    elements.append(Paragraph("<b>Riepilogo per Voce</b>", styles['Heading2']))
-                    elements.append(Spacer(1, 8))
+                    # Aggiunge una pagina nuova per il riepilogo, così non si spezza
+                    elements.append(PageBreak())
                     
-                    # Calcolo dei totali specifici
+                    elements.append(Paragraph("<b>Riepilogo per Voce</b>", styles['Heading2']))
+                    elements.append(Spacer(1, 12))
+                    
+                    # Calcolo totali robusto (cerca le parole inps/inail/cassa anche con i punti)
+                    def somma_se_contiene(df, parole):
+                        mask = df['Tipo'].apply(lambda x: any(p in x.lower().replace('.', '') for p in parole))
+                        return df[mask]['Importo'].sum()
+
                     tot_operai = df_rep[df_rep['Tipo'] == 'Operai']['Importo'].sum()
                     tot_materiali = df_rep[df_rep['Tipo'] == 'Materiale']['Importo'].sum()
+                    tot_inps = somma_se_contiene(df_rep, ['inps'])
+                    tot_inail = somma_se_contiene(df_rep, ['inail'])
+                    tot_cassa = somma_se_contiene(df_rep, ['cassa'])
                     
-                    # Riconoscimento categorie (es. I.N.P.S., I.N.A.I.L.)
-                    tot_inps = df_rep[df_rep['Tipo'].str.contains('inps', case=False, na=False)]['Importo'].sum()
-                    tot_inail = df_rep[df_rep['Tipo'].str.contains('inail', case=False, na=False)]['Importo'].sum()
-                    tot_cassa = df_rep[df_rep['Tipo'].str.contains('cassa', case=False, na=False)]['Importo'].sum()
-                    
-                    # Altri costi amministrativi = Totale amministrativo - (I.N.P.S. + I.N.A.I.L. + Cassa)
                     tot_tutti_amm = df_rep[~df_rep['Tipo'].isin(['Operai', 'Materiale'])]['Importo'].sum()
                     tot_altri_amm = tot_tutti_amm - (tot_inps + tot_inail + tot_cassa)
                     
-                    # Costruzione della tabella riepilogo
                     riepilogo_rows = [
                         ["Costo Operai", f"{tot_operai:,.2f}"],
                         ["Costo Materiale", f"{tot_materiali:,.2f}"],
@@ -1196,7 +1202,7 @@ def page_stampe():
                         ["TOTALE GENERALE", f"{tot_report:,.2f}"]
                     ]
                     
-                    t_riepilogo = Table(riepilogo_rows, colWidths=[200, 100])
+                    t_riepilogo = Table(riepilogo_rows, colWidths=[250, 150])
                     t_riepilogo.setStyle(TableStyle([
                         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#34495E")),
                         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
