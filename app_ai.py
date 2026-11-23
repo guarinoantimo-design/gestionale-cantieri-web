@@ -1089,7 +1089,7 @@ def page_stampe():
         
         s_tipo = col_s4.selectbox("Tipologia Costo", opzioni_tipologia, key="st_tipo")
         
-        if st.button("🖨️ Genera Anteprima PDF", type="primary"):
+        if st.button("🖨️ Genera PDF Personalizzato", type="primary"):
             try:
                 report_data = []
                 tot_report = 0.0
@@ -1144,9 +1144,9 @@ def page_stampe():
                 else:
                     df_rep = pd.DataFrame(report_data).sort_values("Data")
                     
-                    # Creiamo un buffer in memoria invece di un file su disco
-                    pdf_buffer = io.BytesIO()
-                    doc = SimpleDocTemplate(pdf_buffer, pagesize=landscape(A4))
+                    # Creiamo un file temporaneo per il PDF
+                    filename = f"Report_Personalizzato_{datetime.date.today()}.pdf"
+                    doc = SimpleDocTemplate(filename, pagesize=landscape(A4))
                     elements = []
                     styles = getSampleStyleSheet()
                     style_cell = ParagraphStyle('cell_style', parent=styles['Normal'], fontSize=7, leading=9, alignment=0)
@@ -1162,7 +1162,6 @@ def page_stampe():
                         canvas.restoreState()
 
                     # --- TABELLA DI DETTAGLIO ---
-                    # (Rimossa l'intestazione manuale, ora è nel piè di pagina)
                     data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Importo (€)"]]
                     for _, r in df_rep.iterrows():
                         data_rows.append([
@@ -1263,23 +1262,16 @@ def page_stampe():
                     # Genera il PDF passando la funzione di intestazione
                     doc.build(elements, onFirstPage=intestazione_pagina, onLaterPages=intestazione_pagina)
                     
-                    # Prepariamo il PDF per l'anteprima
-                    pdf_buffer.seek(0)
-                    base64_pdf = base64.b64encode(pdf_buffer.read()).decode('utf-8')
-                    pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="600" type="application/pdf"></iframe>'
+                    st.success(f"PDF generato con successo!")
                     
-                    st.success("Anteprima generata! Controlla qui sotto prima di scaricare.")
-                    st.markdown(pdf_display, unsafe_allow_html=True)
-                    
-                    # Pulsante di download (usa un nuovo buffer perché quello di prima è stato consumato per l'anteprima)
-                    pdf_buffer.seek(0)
-                    st.download_button(
-                        label="⬇️ Scarica il PDF",
-                        data=pdf_buffer,
-                        file_name=f"Report_Personalizzato_{datetime.date.today()}.pdf",
-                        mime="application/pdf",
-                        key="dl_pdf_finale"
-                    )
+                    with open(filename, "rb") as f:
+                        st.download_button(
+                            label="⬇️ Scarica il PDF",
+                            data=f,
+                            file_name=filename,
+                            mime="application/pdf",
+                            key="dl_pdf_finale"
+                        )
 
             except Exception as e:
                 st.error(f"Errore generazione report: {e}")
