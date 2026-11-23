@@ -411,250 +411,306 @@ def page_utenti():
                     supabase.table("users").delete().eq("username", user_sel).execute()
                     st.success("Utente eliminato!"); st.rerun()
 
-def page_costi():
-    st.title("📉 Inserimento Costi")
+def page_stampe():
+    from reportlab.platypus import PageBreak
+    import base64
+    
+    st.title("🖨️ Stampe e Report Personalizzati")
+    
+    # Creiamo delle schede per dividere i vari tipi di report
+    tab1, tab2 = st.tabs(["📄 Report Costi per Cantiere", "👷 Riepilogo Costi per Operaio"])
+    
     try:
         df_cantieri = get_cantieri()
-        df_operai = get_operai()
-        df_fornitori = get_fornitori()
     except:
-        st.error("Errore di connessione al database.")
-        return
-    if df_cantieri.empty:
-        st.warning("Devi prima creare un cantiere!")
-        return
+        df_cantieri = pd.DataFrame()
 
-    if "modifica_costo_attiva" not in st.session_state: st.session_state.modifica_costo_attiva = False
-    if "costo_da_modificare" not in st.session_state: st.session_state.costo_da_modificare = None
-
-    tab1, tab2, tab3 = st.tabs(["Costo Personale", "Costo Materiale", "Costo Amministrativo"])
+    opzioni_cantieri = ["Tutti i cantieri"] + [f"{row['id']} - {row['indirizzo']}" for _, row in df_cantieri.iterrows()] if not df_cantieri.empty else ["Tutti i cantieri"]
+    cant_map = {r['id']: r['indirizzo'] for r in df_cantieri.to_dict('records')} if not df_cantieri.empty else {}
     
+    # --- TAB 1: REPORT PER CANTIERE ---
     with tab1:
-        st.subheader("Registra Ore Lavorate")
-        col1, col2 = st.columns(2)
-        data_m = col1.date_input("Data", datetime.date.today(), format="DD/MM/YYYY", key="data_manodopera")
-        cantiere_m = col2.selectbox("Cantiere", df_cantieri['id'].tolist(), format_func=lambda x: df_cantieri[df_cantieri['id']==x]['indirizzo'].values[0], key="cant_manodopera")
+        st.subheader("Genera Report Costi per Cantiere")
         
-        if not df_operai.empty:
-            col3, col4 = st.columns(2)
-            lista_nomi_operai = df_operai['nome'].tolist()
-            operaio_sel = col3.selectbox("Operaio", lista_nomi_operai, key="op_manodopera")
-            
-            if operaio_sel:
-                match_operaio = df_operai[df_operai['nome'] == operaio_sel]
-                if not match_operaio.empty:
-                    tipo_operaio = match_operaio['tipo'].values[0]
-                    # Mostriamo il tipo (Interno/Esterno)
-                    col3.info(f"Tipo: **{tipo_operaio}**")
-                    
-                    costo_standard = match_operaio['costo_orario'].values[0]
-                    # Usiamo una chiave dinamica per evitare che Streamlit "ricordi" il vecchio costo
-                    costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=float(costo_standard), key=f"costo_orario_{operaio_sel}")
-                else:
-                    costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=0.0, key="costo_orario_vuoto")
-                    
-                ore = st.number_input("Ore Lavorate", min_value=0.0, step=0.5, key="ore_lavorate")
-                descrizione_lavori = st.text_input("Descrizione Lavori Eseguiti", key="desc_lavori")
-                
-                if st.button("Salva Costo Personale", type="primary", key="btn_salva_manodopera"):
-                    if ore > 0:
-                        totale = float(ore) * float(costo_orario)
-                        data_formattata = data_m.strftime('%Y-%m-%d')
-                        
-                        dati_da_salvare = {
-                            "data": data_formattata, 
-                            "cantiere_id": int(cantiere_m), 
-                            "operaio": str(operaio_sel), 
-                            "descrizione": str(descrizione_lavori) if descrizione_lavori else "", 
-                            "ore": round(float(ore), 2), 
-                            "costo_orario": round(float(costo_orario), 2), 
-                            "totale": round(totale, 2)
-                        }
-                        try:
-                            supabase.table("costo_manodopera").insert(dati_da_salvare).execute()
-                            st.success("Costo personale registrato!"); st.rerun()
-                        except Exception as e:
-                            st.error(f"Errore durante il salvataggio: {e}")
-                            st.write("Dati inviati al database:", dati_da_salvare)
-                    else:
-                        st.error("Inserisci almeno un'ora.")
-        else: 
-            st.info("Nessun operaio in anagrafica. Aggiungine uno dalla pagina 'Anagrafiche'.")
-
-    with tab2:
-        with st.form("form_materiali", clear_on_submit=True):
-            st.subheader("Registra Acquisto Materiale")
-            col1, col2 = st.columns(2)
-            data_mat = col1.date_input("Data", datetime.date.today(), format="DD/MM/YYYY", key="data_materiale")
-            cantiere_mat = col2.selectbox("Cantiere", df_cantieri['id'].tolist(), format_func=lambda x: df_cantieri[df_cantieri['id']==x]['indirizzo'].values[0], key="cant_materiale")
-            if not df_fornitori.empty:
-                col3, col4 = st.columns(2)
-                fornitore_sel = col3.selectbox("Fornitore", df_fornitori['nome'].tolist(), key="fornitore_materiale")
-                documento = col4.text_input("N. Documento / Fattura", key="documento_materiale")
-                col5, col6 = st.columns(2)
-                imponibile = col5.number_input("Imponibile (€)", min_value=0.0, step=10.0, key="imponibile")
-                iva = col6.number_input("Aliquota IVA (%)", min_value=0.0, value=22.0, step=1.0, key="iva_materiale")
-            else:
-                st.info("Nessun fornitore in anagrafica.")
-                fornitore_sel = None
-            if st.form_submit_button("Salva Costo Materiale"):
-                if fornitore_sel:
-                    totale = imponibile + (imponibile * iva / 100)
-                    data_formattata = data_mat.strftime('%Y-%m-%d')
-                    supabase.table("costo_materiali").insert({"data": data_formattata, "cantiere_id": cantiere_mat, "fornitore": fornitore_sel, "documento": documento, "imponibile": imponibile, "iva": iva, "totale": totale}).execute()
-                    st.success("Costo materiale registrato!"); st.rerun()
-
-    with tab3:
-        st.subheader("Registra Costo Amministrativo")
-        try:
-            res_cat = supabase.table("categorie_amministrative").select("nome").execute()
-            df_cat = pd.DataFrame(res_cat.data)
-        except: df_cat = pd.DataFrame()
-        with st.form("form_amministrativo", clear_on_submit=True):
-            col1, col2 = st.columns(2)
-            data_amm = col1.date_input("Data", datetime.date.today(), format="DD/MM/YYYY", key="data_amm")
-            if not df_cat.empty:
-                desc_amm = col2.selectbox("Categoria Spesa", df_cat['nome'].tolist(), key="desc_amm")
-            else:
-                st.warning("Nessuna categoria disponibile.")
-                desc_amm = None
-            importo_amm = st.number_input("Importo (€)", min_value=0.0, step=10.0, key="importo_amm")
-            if st.form_submit_button("Salva Costo Amministrativo"):
-                if desc_amm and importo_amm > 0:
-                    data_formattata = data_amm.strftime('%Y-%m-%d')
-                    supabase.table("costo_amministrativo").insert({"data": data_formattata, "descrizione": desc_amm, "importo": importo_amm}).execute()
-                    st.success("Costo amministrativo registrato!"); st.rerun()
-
-    st.divider()
-
-    if st.session_state.modifica_costo_attiva and st.session_state.costo_da_modificare:
-        id_unico = st.session_state.costo_da_modificare
-        tipo_costo = id_unico.split("-")[0]
-        real_id = int(id_unico.split("-")[1])
         with st.container():
-            st.subheader(f"✏️ Modifica Costo ID: {real_id}")
-            if tipo_costo == "M":
-                res = supabase.table("costo_manodopera").select("*").eq("id", real_id).execute()
-                if res.data:
-                    row = res.data[0]
-                    with st.form("mod_man"):
-                        m_ore = st.number_input("Ore", value=float(row['ore']))
-                        m_costo = st.number_input("Costo Orario", value=float(row['costo_orario']))
-                        m_desc = st.text_input("Descrizione", value=row['descrizione'] or "")
-                        if st.form_submit_button("Salva"):
-                            supabase.table("costo_manodopera").update({"ore": m_ore, "costo_orario": m_costo, "descrizione": m_desc, "totale": m_ore*m_costo}).eq("id", real_id).execute()
-                            st.session_state.modifica_costo_attiva = False; st.rerun()
-                        if st.form_submit_button("Elimina"):
-                            supabase.table("costo_manodopera").delete().eq("id", real_id).execute()
-                            st.session_state.modifica_costo_attiva = False; st.rerun()
-            elif tipo_costo == "Mat":
-                res = supabase.table("costo_materiali").select("*").eq("id", real_id).execute()
-                if res.data:
-                    row = res.data[0]
-                    with st.form("mod_mat"):
-                        m_imp = st.number_input("Imponibile", value=float(row['imponibile']))
-                        m_iva = st.number_input("IVA %", value=float(row['iva']))
-                        if st.form_submit_button("Salva"):
-                            tot = m_imp + (m_imp*m_iva/100)
-                            supabase.table("costo_materiali").update({"imponibile": m_imp, "iva": m_iva, "totale": tot}).eq("id", real_id).execute()
-                            st.session_state.modifica_costo_attiva = False; st.rerun()
-                        if st.form_submit_button("Elimina"):
-                            supabase.table("costo_materiali").delete().eq("id", real_id).execute()
-                            st.session_state.modifica_costo_attiva = False; st.rerun()
-            elif tipo_costo == "Amm":
-                res = supabase.table("costo_amministrativo").select("*").eq("id", real_id).execute()
-                if res.data:
-                    row = res.data[0]
-                    with st.form("mod_amm"):
-                        m_imp = st.number_input("Importo", value=float(row['importo']))
-                        if st.form_submit_button("Salva"):
-                            supabase.table("costo_amministrativo").update({"importo": m_imp}).eq("id", real_id).execute()
-                            st.session_state.modifica_costo_attiva = False; st.rerun()
-                        if st.form_submit_button("Elimina"):
-                            supabase.table("costo_amministrativo").delete().eq("id", real_id).execute()
-                            st.session_state.modifica_costo_attiva = False; st.rerun()
-            if st.button("Annulla Modifica"): st.session_state.modifica_costo_attiva = False; st.session_state.costo_da_modificare = None; st.rerun()
-        st.divider()
-
-    st.subheader("📋 Elenco Costi Registrati")
-    with st.expander("🔍 Filtra i costi", expanded=True):
-        col_f1, col_f2, col_f3, col_f4 = st.columns(4)
-        filtro_testo = col_f1.text_input("Cerca", placeholder="Scrivi qui...")
-        filtro_tipo = col_f2.selectbox("Tipo", ["Tutti", "Personale", "Materiale", "Amministrativo"])
-        data_inizio = col_f3.date_input("Dal", value=datetime.date.today().replace(month=1, day=1), format="DD/MM/YYYY")
-        data_fine = col_f4.date_input("Al", value=datetime.date.today(), format="DD/MM/YYYY")
-
-    costi_list = []
-    try:
-        if filtro_tipo in ["Tutti", "Personale"]:
-            res = supabase.table("costo_manodopera").select("*").gte("data", str(data_inizio)).lte("data", str(data_fine)).execute()
-            for r in res.data: costi_list.append({"ID_Unico": f"M-{r['id']}", "Tipo": "Personale", "Data": r['data'], "Cantiere": r['cantiere_id'], "Descrizione": r['operaio'] + " " + (r['descrizione'] or ""), "Totale": r['totale']})
-        if filtro_tipo in ["Tutti", "Materiale"]:
-            res = supabase.table("costo_materiali").select("*").gte("data", str(data_inizio)).lte("data", str(data_fine)).execute()
-            for r in res.data: costi_list.append({"ID_Unico": f"Mat-{r['id']}", "Tipo": "Materiale", "Data": r['data'], "Cantiere": r['cantiere_id'], "Descrizione": r['fornitore'], "Totale": r['imponibile']})
-        if filtro_tipo in ["Tutti", "Amministrativo"]:
-            res = supabase.table("costo_amministrativo").select("*").gte("data", str(data_inizio)).lte("data", str(data_fine)).execute()
-            for r in res.data: costi_list.append({"ID_Unico": f"Amm-{r['id']}", "Tipo": "Amministrativo", "Data": r['data'], "Cantiere": "Generale", "Descrizione": r['descrizione'], "Totale": r['importo']})
-    except Exception as e:
-        st.error(f"Errore caricamento costi: {e}")
-
-    if not costi_list:
-        st.info("Nessun costo trovato.")
-    else:
-        df_costi = pd.DataFrame(costi_list).sort_values("Data", ascending=False)
-        cant_map = {r['id']: r['indirizzo'] for r in df_cantieri.to_dict('records')}
-        df_costi['Cantiere'] = df_costi['Cantiere'].apply(lambda x: cant_map.get(x, x) if isinstance(x, int) else x)
-        
-        if filtro_testo:
-            mask = (df_costi['Cantiere'].astype(str).str.contains(filtro_testo, case=False, na=False) | df_costi['Descrizione'].astype(str).str.contains(filtro_testo, case=False, na=False))
-            df_costi = df_costi[mask]
-
-        if df_costi.empty:
-            st.info("Nessun costo trovato con questi filtri.")
-        else:
-            for index, row in df_costi.iterrows():
-                col_dati, col_btn = st.columns([8, 2])
-                with col_dati: st.markdown(f"**{row['Tipo']}** | {formatta_data_italiana(row['Data'])} | {row['Cantiere']} | {row['Descrizione']} | **€ {row['Totale']:,.2f}**")
-                with col_btn:
-                    if st.button("✏️ Modifica", key=f"mod_{row['ID_Unico']}"):
-                        st.session_state.modifica_costo_attiva = True; st.session_state.costo_da_modificare = row['ID_Unico']; st.rerun()
+            col_s1, col_s2 = st.columns(2)
+            s_data_ini = col_s1.date_input("Periodo Dal", value=datetime.date.today().replace(day=1), format="DD/MM/YYYY", key="st_data_ini")
+            s_data_fin = col_s2.date_input("Periodo Al", value=datetime.date.today(), format="DD/MM/YYYY", key="st_data_fin")
             
-            st.divider()
-            totale_filtrato = df_costi['Totale'].sum()
-            st.markdown(f"### Totale dei costi filtrati: **€ {totale_filtrato:,.2f}**")
+            col_s3, col_s4 = st.columns(2)
+            s_cantiere = col_s3.selectbox("Cantiere", opzioni_cantieri, key="st_cantiere")
             
-            if st.button("📄 Esporta Risultati in PDF", type="primary", key="btn_export_pdf_costi"):
+            try:
+                res_cat = supabase.table("categorie_amministrative").select("nome").execute()
+                lista_categorie = [c['nome'] for c in res_cat.data]
+            except:
+                lista_categorie = []
+                
+            opzioni_tipologia = [
+                "Tutti", 
+                "Solo Operai", 
+                "Solo Materiale", 
+                "Operai + Materiali", 
+                "Operai + Materiali + Tutte le Categorie Amm."
+            ] + [f"Solo {cat}" for cat in lista_categorie]
+            
+            s_tipo = col_s4.selectbox("Tipologia Costo", opzioni_tipologia, key="st_tipo")
+            
+            if st.button("🖨️ Genera PDF Cantiere", type="primary"):
                 try:
-                    filename = f"Riepilogo_Costi_{datetime.date.today()}.pdf"
-                    doc = SimpleDocTemplate(filename, pagesize=landscape(A4))
-                    elements = []
-                    styles = getSampleStyleSheet()
-                    style_cell = ParagraphStyle('cell_style', parent=styles['Normal'], fontSize=8, leading=10, alignment=0)
+                    report_data = []
+                    tot_report = 0.0
                     
-                    elements.append(Paragraph(f"Riepilogo Costi dal {formatta_data_italiana(data_inizio)} al {formatta_data_italiana(data_fine)}", styles['Title']))
-                    elements.append(Spacer(1, 12))
+                    res_man = supabase.table("costo_manodopera").select("*").gte("data", str(s_data_ini)).lte("data", str(s_data_fin)).execute()
+                    res_mat = supabase.table("costo_materiali").select("*").gte("data", str(s_data_ini)).lte("data", str(s_data_fin)).execute()
+                    res_amm = supabase.table("costo_amministrativo").select("*").gte("data", str(s_data_ini)).lte("data", str(s_data_fin)).execute()
                     
-                    data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Totale (€)"]]
-                    for _, row in df_costi.iterrows():
-                        data_rows.append([row['Tipo'], formatta_data_italiana(row['Data']), Paragraph(row['Cantiere'], style_cell), Paragraph(row['Descrizione'], style_cell), f"{row['Totale']:,.2f}"])
-                    data_rows.append(["", "", "", "TOTALE GENERALE", f"{totale_filtrato:,.2f}"])
+                    quota_amm_cantiere = 0.0
+                    if s_cantiere != "Tutti i cantieri":
+                        cid_selezionato = int(s_cantiere.split(" - ")[0])
+                        ripartizione = calcola_quote_amministrative(str(s_data_ini), str(s_data_fin), includi_esterne=True)
+                        quota_amm_cantiere = ripartizione['quote'].get(cid_selezionato, 0.0)
+
+                    # 1. Operai
+                    if "Operai" in s_tipo or s_tipo == "Tutti":
+                        for r in res_man.data:
+                            if s_cantiere != "Tutti i cantieri" and str(r['cantiere_id']) != s_cantiere.split(" - ")[0]: continue
+                            tot_report += float(r['totale'])
+                            report_data.append({"Tipo": "Operai", "Data": r['data'], "Cantiere": cant_map.get(r['cantiere_id'], r['cantiere_id']), "Descrizione": f"{r['operaio']} - {r['descrizione']}", "Importo": r['totale']})
+
+                    # 2. Materiali
+                    if "Material" in s_tipo or s_tipo == "Tutti":
+                        for r in res_mat.data:
+                            if s_cantiere != "Tutti i cantieri" and str(r['cantiere_id']) != s_cantiere.split(" - ")[0]: continue
+                            tot_report += float(r['imponibile'])
+                            report_data.append({"Tipo": "Materiale", "Data": r['data'], "Cantiere": cant_map.get(r['cantiere_id'], r['cantiere_id']), "Descrizione": r['fornitore'], "Importo": r['imponibile']})
+
+                    # 3. Categorie Amministrative
+                    cat_da_cercare = []
+                    if s_tipo == "Operai + Materiali + Tutte le Categorie Amm." or s_tipo == "Tutti":
+                        cat_da_cercare = lista_categorie
+                    elif s_tipo.startswith("Solo ") and s_tipo not in ["Solo Operai", "Solo Materiale"]:
+                        cat_da_cercare = [s_tipo.replace("Solo ", "")]
+
+                    if cat_da_cercare:
+                        for r in res_amm.data:
+                            if r['descrizione'] in cat_da_cercare:
+                                if s_cantiere != "Tutti i cantieri":
+                                    tot_costi_amm = sum(float(x['importo']) for x in res_amm.data)
+                                    if tot_costi_amm > 0 and quota_amm_cantiere > 0:
+                                        proporzione_costo = float(r['importo']) / tot_costi_amm
+                                        importo_ripartito = proporzione_costo * quota_amm_cantiere
+                                        tot_report += importo_ripartito
+                                        report_data.append({"Tipo": r['descrizione'], "Data": r['data'], "Cantiere": s_cantiere.split(" - ")[1], "Descrizione": r['descrizione'], "Importo": importo_ripartito})
+                                else:
+                                    tot_report += float(r['importo'])
+                                    report_data.append({"Tipo": r['descrizione'], "Data": r['data'], "Cantiere": "Generale", "Descrizione": r['descrizione'], "Importo": r['importo']})
                     
-                    t = Table(data_rows, colWidths=[80, 70, 180, 200, 80], repeatRows=1)
-                    t.setStyle(TableStyle([
-                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
-                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                        ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#F4F6F7")),
-                        ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#BDC3C7")),
-                        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
-                    ]))
-                    elements.append(t)
-                    doc.build(elements)
-                    st.success(f"PDF generato con successo: {filename}")
-                    with open(filename, "rb") as f: st.download_button("⬇️ Scarica il PDF", data=f, file_name=filename, mime="application/pdf")
-                except Exception as e: st.error(f"Errore PDF: {e}")
-                except Exception as e: st.error(f"Errore PDF: {e}")
+                    if not report_data:
+                        st.warning("Nessun dato trovato per questa combinazione di filtri.")
+                    else:
+                        df_rep = pd.DataFrame(report_data).sort_values("Data")
+                        filename = f"Report_Cantiere_{datetime.date.today()}.pdf"
+                        doc = SimpleDocTemplate(filename, pagesize=landscape(A4))
+                        elements = []
+                        styles = getSampleStyleSheet()
+                        style_cell = ParagraphStyle('cell_style', parent=styles['Normal'], fontSize=7, leading=9, alignment=0)
+                        style_num = ParagraphStyle('num_style', parent=styles['Normal'], fontSize=7, leading=9, alignment=2)
+                        
+                        def intestazione_pagina(canvas, doc):
+                            canvas.saveState()
+                            canvas.setFont('Helvetica', 8)
+                            canvas.setFillColor(colors.grey)
+                            testo_pie = f"Cantiere: {s_cantiere}  |  Tipologia: {s_tipo}  |  Pagina {doc.page}"
+                            canvas.drawString(30, 20, testo_pie)
+                            canvas.restoreState()
+
+                        data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Importo (€)"]]
+                        for _, r in df_rep.iterrows():
+                            data_rows.append([Paragraph(str(r['Tipo']), style_cell), formatta_data_italiana(r['Data']), Paragraph(str(r['Cantiere']), style_cell), Paragraph(str(r['Descrizione']), style_cell), Paragraph(f"{r['Importo']:,.2f}", style_num)])
+                        
+                        data_rows.append(["", "", "", "TOTALE GENERALE", f"{tot_report:,.2f}"])
+                        
+                        t = Table(data_rows, colWidths=[90, 60, 140, 230, 80], repeatRows=1)
+                        t.setStyle(TableStyle([
+                            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
+                            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                            ('FONTSIZE', (0, 0), (-1, 0), 8),
+                            ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#F4F6F7")),
+                            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#BDC3C7")),
+                            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                        ]))
+                        elements.append(t)
+                        
+                        elements.append(PageBreak())
+                        
+                        elements.append(Paragraph("<b>Riepilogo Costi per Categoria</b>", styles['Heading2']))
+                        elements.append(Spacer(1, 12))
+                        
+                        def somma_se_contiene(df, parole):
+                            mask = df['Tipo'].apply(lambda x: any(p in x.lower().replace('.', '') for p in parole))
+                            return df[mask]['Importo'].sum()
+
+                        tot_operai = df_rep[df_rep['Tipo'] == 'Operai']['Importo'].sum()
+                        tot_materiali = df_rep[df_rep['Tipo'] == 'Materiale']['Importo'].sum()
+                        tot_inps = somma_se_contiene(df_rep, ['inps'])
+                        tot_inail = somma_se_contiene(df_rep, ['inail'])
+                        tot_cassa = somma_se_contiene(df_rep, ['cassa'])
+                        tot_tutti_amm = df_rep[~df_rep['Tipo'].isin(['Operai', 'Materiale'])]['Importo'].sum()
+                        tot_altri_amm = tot_tutti_amm - (tot_inps + tot_inail + tot_cassa)
+
+                        matrix_data = [["", Paragraph("<b>Costi Manodopera<br/>Diretti</b>", style_cell), Paragraph("<b>Costi Manodopera<br/>Indiretti</b>", style_cell), Paragraph("<b>Materiali</b>", style_cell), Paragraph("<b>Altri Amministrativi</b>", style_cell)]]
+                        matrix_data.append(["Operai", f"€ {tot_operai:,.2f}", "", "", ""])
+                        matrix_data.append(["INPS", "", f"€ {tot_inps:,.2f}", "", ""])
+                        matrix_data.append(["INAIL", "", f"€ {tot_inail:,.2f}", "", ""])
+                        matrix_data.append(["Cassa Edile", "", f"€ {tot_cassa:,.2f}", "", ""])
+                        matrix_data.append(["Materiali", "", "", f"€ {tot_materiali:,.2f}", ""])
+                        
+                        categorie_rimanenti = [c for c in lista_categorie if not any(p in c.lower().replace('.', '') for p in ['inps', 'inail', 'cassa'])]
+                        for cat in categorie_rimanenti:
+                            val_cat = somma_se_contiene(df_rep, [cat.lower().replace('.', '')])
+                            if val_cat > 0:
+                                matrix_data.append([cat, "", "", "", f"€ {val_cat:,.2f}"])
+                        
+                        matrix_data.append(["Totali", f"€ {tot_operai:,.2f}", f"€ {tot_inps + tot_inail + tot_cassa:,.2f}", f"€ {tot_materiali:,.2f}", f"€ {tot_altri_amm:,.2f}"])
+                        matrix_data.append(["Totale Generale", f"€ {tot_report:,.2f}", "", "", ""])
+
+                        t_matrix = Table(matrix_data, colWidths=[120, 130, 130, 90, 110])
+                        style_matrix = [('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#BDC3C7")), ('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('ALIGN', (0, 1), (0, -1), 'LEFT'), ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'), ('FONTNAME', (0, -2), (-1, -1), 'Helvetica-Bold'), ('BACKGROUND', (0, -2), (-1, -2), colors.HexColor("#ECF0F1")), ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor("#F4F6F7")), ('GRID', (0, 0), (-1, -1), 1, colors.black), ('TOPPADDING', (0, 0), (-1, -1), 6), ('BOTTOMPADDING', (0, 0), (-1, -1), 6)]
+                        for i in range(1, len(matrix_data)): style_matrix.append(('BACKGROUND', (0, i), (0, i), colors.HexColor("#E8F4F8")))
+                        t_matrix.setStyle(TableStyle(style_matrix))
+                        elements.append(t_matrix)
+                        
+                        doc.build(elements, onFirstPage=intestazione_pagina, onLaterPages=intestazione_pagina)
+                        st.success(f"PDF generato con successo!")
+                        
+                        with open(filename, "rb") as f:
+                            st.download_button("⬇️ Scarica il PDF Cantiere", data=f, file_name=filename, mime="application/pdf", key="dl_pdf_cantiere")
+
+                except Exception as e:
+                    st.error(f"Errore generazione report: {e}")
+
+    # --- TAB 2: REPORT COSTI PER OPERAIO ---
+    with tab2:
+        st.subheader("Genera Report Costi per Operaio")
+        st.write("Questo report mostra il dettaglio delle ore e del costo totale per ogni singolo operaio nel periodo selezionato.")
+        
+        with st.container():
+            col_o1, col_o2 = st.columns(2)
+            o_data_ini = col_o1.date_input("Periodo Dal", value=datetime.date.today().replace(day=1), format="DD/MM/YYYY", key="o_data_ini")
+            o_data_fin = col_o2.date_input("Periodo Al", value=datetime.date.today(), format="DD/MM/YYYY", key="o_data_fin")
+            
+            if st.button("👷 Genera PDF per Operaio", type="primary"):
+                try:
+                    res_man = supabase.table("costo_manodopera").select("*").gte("data", str(o_data_ini)).lte("data", str(o_data_fin)).execute()
+                    
+                    if not res_man.data:
+                        st.warning("Nessun costo operaio trovato nel periodo selezionato.")
+                    else:
+                        df_man = pd.DataFrame(res_man.data)
+                        df_man['CantiereNome'] = df_man['cantiere_id'].apply(lambda x: cant_map.get(x, x))
+                        
+                        df_raggruppato = df_man.groupby(['operaio', 'CantiereNome']).agg(
+                            Ore_Totali=('ore', 'sum'),
+                            Costo_Totale=('totale', 'sum')
+                        ).reset_index()
+                        
+                        df_raggruppato = df_raggruppato.sort_values(by=['operaio', 'CantiereNome'])
+                        
+                        filename = f"Riepilogo_Operai_{datetime.date.today()}.pdf"
+                        doc = SimpleDocTemplate(filename, pagesize=landscape(A4))
+                        elements = []
+                        styles = getSampleStyleSheet()
+                        style_cell = ParagraphStyle('cell_style', parent=styles['Normal'], fontSize=8, leading=10, alignment=0)
+                        style_num = ParagraphStyle('num_style', parent=styles['Normal'], fontSize=8, leading=10, alignment=2)
+                        
+                        def intestazione_pagina_operaio(canvas, doc):
+                            canvas.saveState()
+                            canvas.setFont('Helvetica', 8)
+                            canvas.setFillColor(colors.grey)
+                            testo_pie = f"Riepilogo Costi Operai dal {formatta_data_italiana(o_data_ini)} al {formatta_data_italiana(o_data_fin)}  |  Pagina {doc.page}"
+                            canvas.drawString(30, 20, testo_pie)
+                            canvas.restoreState()
+
+                        elements.append(Paragraph(f"Riepilogo Costi per Operaio: dal {formatta_data_italiana(o_data_ini)} al {formatta_data_italiana(o_data_fin)}", styles['Title']))
+                        elements.append(Spacer(1, 12))
+                        
+                        data_rows = [["Operaio", "Cantiere", "Ore Lavorate", "Costo Totale (€)"]]
+                        
+                        # Inizializzazione sicura delle variabili
+                        operaio_corrente = None
+                        totale_generale_ore = 0
+                        totale_generale_costo = 0
+                        subtotale_ore = 0
+                        subtotale_costo = 0
+                        
+                        for _, r in df_raggruppato.iterrows():
+                            # Se cambia l'operaio, aggiungiamo una riga di subtotale e resettiamo
+                            if operaio_corrente is not None and r['operaio'] != operaio_corrente:
+                                data_rows.append([f"TOTALE {operaio_corrente.upper()}", "", f"{subtotale_ore:.1f}", f"{subtotale_costo:,.2f}"])
+                                data_rows.append(["", "", "", ""]) # Riga vuota per separare i vari operai
+                                subtotale_ore = 0
+                                subtotale_costo = 0
+                            
+                            if r['operaio'] != operaio_corrente:
+                                operaio_corrente = r['operaio']
+                            
+                            # Aggiungi la riga dell'operaio nel cantiere
+                            subtotale_ore += float(r['Ore_Totali'])
+                            subtotale_costo += float(r['Costo_Totale'])
+                            totale_generale_ore += float(r['Ore_Totali'])
+                            totale_generale_costo += float(r['Costo_Totale'])
+                            
+                            data_rows.append([
+                                Paragraph(str(r['operaio']), style_cell),
+                                Paragraph(str(r['CantiereNome']), style_cell),
+                                Paragraph(f"{r['Ore_Totali']:,.1f}", style_num),
+                                Paragraph(f"{r['Costo_Totale']:,.2f}", style_num)
+                            ])
+                        
+                        # Aggiungi l'ultimo subtotale
+                        if operaio_corrente is not None:
+                            data_rows.append([f"TOTALE {operaio_corrente.upper()}", "", f"{subtotale_ore:.1f}", f"{subtotale_costo:,.2f}"])
+                            data_rows.append(["", "", "", ""])
+                        
+                        # Riga Totale Generale Assoluto
+                        data_rows.append(["TOTALE GENERALE ASSOLUTO", "", f"{totale_generale_ore:.1f}", f"{totale_generale_costo:,.2f}"])
+                        
+                        t = Table(data_rows, colWidths=[160, 200, 100, 120], repeatRows=1)
+                        
+                        style_cmds = [
+                            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
+                            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                            ('FONTSIZE', (0, 0), (-1, 0), 9),
+                            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#BDC3C7")),
+                        ]
+                        
+                        # Colora le righe di Totale
+                        for i, row in enumerate(data_rows):
+                            if str(row[0]).startswith("TOTALE") and row[0] != "TOTALE GENERALE ASSOLUTO":
+                                style_cmds.append(('BACKGROUND', (0, i), (-1, i), colors.HexColor("#EAECEE")))
+                                style_cmds.append(('FONTNAME', (0, i), (-1, i), 'Helvetica-Bold'))
+                            elif row[0] == "TOTALE GENERALE ASSOLUTO":
+                                style_cmds.append(('BACKGROUND', (0, i), (-1, i), colors.HexColor("#D5F4E6")))
+                                style_cmds.append(('FONTNAME', (0, i), (-1, i), 'Helvetica-Bold'))
+
+                        t.setStyle(TableStyle(style_cmds))
+                        elements.append(t)
+                        
+                        doc.build(elements, onFirstPage=intestazione_pagina_operaio, onLaterPages=intestazione_pagina_operaio)
+                        st.success(f"PDF generato con successo!")
+                        
+                        with open(filename, "rb") as f:
+                            st.download_button("⬇️ Scarica il PDF Operai", data=f, file_name=filename, mime="application/pdf", key="dl_pdf_operai")
+
+                except Exception as e:
+                    st.error(f"Errore generazione report operai: {e}")
 
 def page_incassi():
     st.title("💰 Gestione Incassi")
