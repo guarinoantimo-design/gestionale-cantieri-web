@@ -1075,7 +1075,6 @@ def page_stampe():
         except:
             lista_categorie = []
             
-        # Nuove opzioni aggiunte
         opzioni_tipologia = [
             "Tutti", 
             "Solo Operai", 
@@ -1168,18 +1167,34 @@ def page_stampe():
                     ]))
                     elements.append(t)
                     
-                    # --- Riepilogo per Voce ---
+                    # --- Riepilogo per Voce Personalizzato ---
                     elements.append(Spacer(1, 20))
                     elements.append(Paragraph("<b>Riepilogo per Voce</b>", styles['Heading2']))
                     elements.append(Spacer(1, 8))
                     
-                    df_riepilogo = df_rep.groupby('Tipo')['Importo'].sum().reset_index()
+                    # Calcolo dei totali specifici
+                    tot_operai = df_rep[df_rep['Tipo'] == 'Operai']['Importo'].sum()
+                    tot_materiali = df_rep[df_rep['Tipo'] == 'Materiale']['Importo'].sum()
                     
-                    riepilogo_rows = [["Voce di Costo", "Totale Parziale (€)"]]
-                    for _, row in df_riepilogo.iterrows():
-                        riepilogo_rows.append([row['Tipo'], f"{row['Importo']:,.2f}"])
+                    # Riconoscimento categorie (es. I.N.P.S., I.N.A.I.L.)
+                    tot_inps = df_rep[df_rep['Tipo'].str.contains('inps', case=False, na=False)]['Importo'].sum()
+                    tot_inail = df_rep[df_rep['Tipo'].str.contains('inail', case=False, na=False)]['Importo'].sum()
+                    tot_cassa = df_rep[df_rep['Tipo'].str.contains('cassa', case=False, na=False)]['Importo'].sum()
                     
-                    riepilogo_rows.append(["TOTALE GENERALE", f"{tot_report:,.2f}"])
+                    # Altri costi amministrativi = Totale amministrativo - (INPS + INAIL + Cassa)
+                    tot_tutti_amm = df_rep[~df_rep['Tipo'].isin(['Operai', 'Materiale'])]['Importo'].sum()
+                    tot_altri_amm = tot_tutti_amm - (tot_inps + tot_inail + tot_cassa)
+                    
+                    # Costruzione della tabella riepilogo
+                    riepilogo_rows = [
+                        ["Costo Operai", f"{tot_operai:,.2f}"],
+                        ["Costo Materiale", f"{tot_materiali:,.2f}"],
+                        ["Costo I.N.P.S.", f"{tot_inps:,.2f}"],
+                        ["Costo I.N.A.I.L.", f"{tot_inail:,.2f}"],
+                        ["Costo Cassa Edile", f"{tot_cassa:,.2f}"],
+                        ["Altri Costi Amm.", f"{tot_altri_amm:,.2f}"],
+                        ["TOTALE GENERALE", f"{tot_report:,.2f}"]
+                    ]
                     
                     t_riepilogo = Table(riepilogo_rows, colWidths=[200, 100])
                     t_riepilogo.setStyle(TableStyle([
