@@ -633,7 +633,7 @@ def page_stampe():
                         elements.append(Paragraph(f"Riepilogo Costi per Operaio: dal {formatta_data_italiana(o_data_ini)} al {formatta_data_italiana(o_data_fin)}", styles['Title']))
                         elements.append(Spacer(1, 12))
                         
-                        # Dichiarazione variabili
+                        # INIZIALIZZAZIONE SICURA DELLE VARIABILI (FUORI DAL CICLO)
                         operaio_corrente = None
                         totale_generale_ore = 0.0
                         totale_generale_costo = 0.0
