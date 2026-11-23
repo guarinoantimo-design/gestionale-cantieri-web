@@ -1151,7 +1151,7 @@ def page_stampe():
                     elements.append(Paragraph(f"Cantiere: {s_cantiere} | Tipologia: {s_tipo}", styles['Normal']))
                     elements.append(Spacer(1, 12))
                     
-                    # Tabella principale con font ridotto per far stare più righe
+                    # --- TABELLA DETTAGLIO (Pagina 1) ---
                     data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Importo (€)"]]
                     for _, r in df_rep.iterrows():
                         data_rows.append([r['Tipo'], formatta_data_italiana(r['Data']), Paragraph(str(r['Cantiere']), style_cell), Paragraph(str(r['Descrizione']), style_cell), Paragraph(f"{r['Importo']:,.2f}", style_num)])
@@ -1172,13 +1172,13 @@ def page_stampe():
                     ]))
                     elements.append(t)
                     
-                    # Aggiunge una pagina nuova per il riepilogo, così non si spezza
+                    # Nuova pagina per il riepilogo a matrice
                     elements.append(PageBreak())
                     
-                    elements.append(Paragraph("<b>Riepilogo per Voce</b>", styles['Heading2']))
+                    elements.append(Paragraph("<b>Riepilogo Costi per Categoria</b>", styles['Heading2']))
                     elements.append(Spacer(1, 12))
                     
-                    # Calcolo totali robusto (cerca le parole inps/inail/cassa anche con i punti)
+                    # Calcolo valori
                     def somma_se_contiene(df, parole):
                         mask = df['Tipo'].apply(lambda x: any(p in x.lower().replace('.', '') for p in parole))
                         return df[mask]['Importo'].sum()
@@ -1189,32 +1189,68 @@ def page_stampe():
                     tot_inail = somma_se_contiene(df_rep, ['inail'])
                     tot_cassa = somma_se_contiene(df_rep, ['cassa'])
                     
+                    # Recuperiamo il totale amministrativo complessivo filtrato
                     tot_tutti_amm = df_rep[~df_rep['Tipo'].isin(['Operai', 'Materiale'])]['Importo'].sum()
                     tot_altri_amm = tot_tutti_amm - (tot_inps + tot_inail + tot_cassa)
-                    
-                    riepilogo_rows = [
-                        ["Costo Operai", f"{tot_operai:,.2f}"],
-                        ["Costo Materiale", f"{tot_materiali:,.2f}"],
-                        ["Costo I.N.P.S.", f"{tot_inps:,.2f}"],
-                        ["Costo I.N.A.I.L.", f"{tot_inail:,.2f}"],
-                        ["Costo Cassa Edile", f"{tot_cassa:,.2f}"],
-                        ["Altri Costi Amm.", f"{tot_altri_amm:,.2f}"],
-                        ["TOTALE GENERALE", f"{tot_report:,.2f}"]
+
+                    # Intestazione della matrice
+                    matrix_data = [
+                        ["", "Costi Manodopera Diretti", "Costi Manodopera Indiretti", "Materiali", "Altri Amministrativi"]
                     ]
                     
-                    t_riepilogo = Table(riepilogo_rows, colWidths=[250, 150])
-                    t_riepilogo.setStyle(TableStyle([
-                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#34495E")),
-                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                        ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#EAECEE")),
-                        ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#BDC3C7")),
-                        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
-                        ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor("#D5F4E6")),
-                    ]))
+                    # Righe della matrice
+                    # 1. Operai
+                    matrix_data.append(["Operai", f"€ {tot_operai:,.2f}", "", "", ""])
+                    # 2. INPS
+                    matrix_data.append(["INPS", "", f"€ {tot_inps:,.2f}", "", ""])
+                    # 3. INAIL
+                    matrix_data.append(["INAIL", "", f"€ {tot_inail:,.2f}", "", ""])
+                    # 4. Cassa Edile
+                    matrix_data.append(["Cassa Edile", "", f"€ {tot_cassa:,.2f}", "", ""])
+                    # 5. Materiali
+                    matrix_data.append(["Materiali", "", "", f"€ {tot_materiali:,.2f}", ""])
                     
-                    elements.append(t_riepilogo)
+                    # Righe per ogni categoria amministrativa (esclusi INPS, INAIL, Cassa)
+                    categorie_rimanenti = [c for c in lista_categorie if not any(p in c.lower().replace('.', '') for p in ['inps', 'inail', 'cassa'])]
+                    for cat in categorie_rimanenti:
+                        val_cat = somma_se_contiene(df_rep, [cat.lower().replace('.', '')])
+                        if val_cat > 0:
+                            matrix_data.append([cat, "", "", "", f"€ {val_cat:,.2f}"])
+                    
+                    # Totali Parziali
+                    tot_mdo_diretti = tot_operai
+                    tot_mdo_indiretti = tot_inps + tot_inail + tot_cassa
+                    matrix_data.append(["Totali", f"€ {tot_mdo_diretti:,.2f}", f"€ {tot_mdo_indiretti:,.2f}", f"€ {tot_materiali:,.2f}", f"€ {tot_altri_amm:,.2f}"])
+                    
+                    # Totale Generale
+                    matrix_data.append(["Totale Generale", f"€ {tot_report:,.2f}", "", "", ""])
+
+                    # Creazione tabella
+                    t_matrix = Table(matrix_data, colWidths=[140, 120, 120, 90, 110])
+                    
+                    # Stile della matrice
+                    style_matrix = [
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#BDC3C7")),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                        ('ALIGN', (0, 1), (0, -1), 'LEFT'), # Allinea a sinistra i nomi delle voci
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('FONTNAME', (0, -2), (-1, -2), 'Helvetica-Bold'), # Grassetto per i Totali
+                        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'), # Grassetto per il Totale Generale
+                        ('BACKGROUND', (0, -2), (-1, -2), colors.HexColor("#ECF0F1")),
+                        ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor("#F4F6F7")),
+                        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                        ('TOPPADDING', (0, 0), (-1, -1), 6),
+                        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                    ]
+                    
+                    # Colora di celeste le celle della prima colonna come nella tua immagine (opzionale)
+                    for i in range(1, len(matrix_data)):
+                        style_matrix.append(('BACKGROUND', (0, i), (0, i), colors.HexColor("#E8F4F8")))
+
+                    t_matrix.setStyle(TableStyle(style_matrix))
+                    elements.append(t_matrix)
                     
                     doc.build(elements)
                     st.success(f"PDF generato: {filename}")
