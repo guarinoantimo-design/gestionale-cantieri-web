@@ -626,7 +626,9 @@ def page_costi():
                     styles = getSampleStyleSheet()
                     style_cell = ParagraphStyle('cell_style', parent=styles['Normal'], fontSize=8, leading=10, alignment=0)
                     
-                    elements.append(Paragraph(f"Riepilogo Costi dal {formatta_data_italiana(data_inizio)} al {formatta_data_italiana(data_fine)}", styles['Title']))
+                    elements.append(Paragraph(f"Report Personalizzato dal {formatta_data_italiana(s_data_ini)} al {formatta_data_italiana(s_data_fin)}", styles['Title']))
+                    elements.append(Paragraph(f"<b>Cantiere:</b> {s_cantiere}", styles['Heading3']))
+                    elements.append(Paragraph(f"<b>Tipologia Costo:</b> {s_tipo}", styles['Normal']))
                     elements.append(Spacer(1, 12))
                     
                     data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Totale (€)"]]
