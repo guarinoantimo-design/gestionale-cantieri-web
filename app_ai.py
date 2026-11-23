@@ -416,7 +416,6 @@ def page_stampe():
     
     st.title("🖨️ Stampe e Report Personalizzati")
     
-    # Creiamo delle schede per dividere i vari tipi di report
     tab1, tab2 = st.tabs(["📄 Report Costi per Cantiere", "👷 Riepilogo Costi per Operaio"])
     
     try:
@@ -470,21 +469,18 @@ def page_stampe():
                         ripartizione = calcola_quote_amministrative(str(s_data_ini), str(s_data_fin), includi_esterne=True)
                         quota_amm_cantiere = ripartizione['quote'].get(cid_selezionato, 0.0)
 
-                    # 1. Operai
                     if "Operai" in s_tipo or s_tipo == "Tutti":
                         for r in res_man.data:
                             if s_cantiere != "Tutti i cantieri" and str(r['cantiere_id']) != s_cantiere.split(" - ")[0]: continue
                             tot_report += float(r['totale'])
                             report_data.append({"Tipo": "Operai", "Data": r['data'], "Cantiere": cant_map.get(r['cantiere_id'], r['cantiere_id']), "Descrizione": f"{r['operaio']} - {r['descrizione']}", "Importo": r['totale']})
 
-                    # 2. Materiali
                     if "Material" in s_tipo or s_tipo == "Tutti":
                         for r in res_mat.data:
                             if s_cantiere != "Tutti i cantieri" and str(r['cantiere_id']) != s_cantiere.split(" - ")[0]: continue
                             tot_report += float(r['imponibile'])
                             report_data.append({"Tipo": "Materiale", "Data": r['data'], "Cantiere": cant_map.get(r['cantiere_id'], r['cantiere_id']), "Descrizione": r['fornitore'], "Importo": r['imponibile']})
 
-                    # 3. Categorie Amministrative
                     cat_da_cercare = []
                     if s_tipo == "Operai + Materiali + Tutte le Categorie Amm." or s_tipo == "Tutti":
                         cat_da_cercare = lista_categorie
@@ -637,7 +633,7 @@ def page_stampe():
                         elements.append(Paragraph(f"Riepilogo Costi per Operaio: dal {formatta_data_italiana(o_data_ini)} al {formatta_data_italiana(o_data_fin)}", styles['Title']))
                         elements.append(Spacer(1, 12))
                         
-                        # DICHIARAZIONE DELLE VARIABILI PRIMA DELLA TABELLA
+                        # Dichiarazione variabili
                         operaio_corrente = None
                         totale_generale_ore = 0.0
                         totale_generale_costo = 0.0
@@ -647,17 +643,15 @@ def page_stampe():
                         data_rows = [["Operaio", "Cantiere", "Ore Lavorate", "Costo Totale (€)"]]
                         
                         for _, r in df_raggruppato.iterrows():
-                            # Se cambia l'operaio, aggiungiamo una riga di subtotale e resettiamo
                             if operaio_corrente is not None and r['operaio'] != operaio_corrente:
                                 data_rows.append([f"TOTALE {operaio_corrente.upper()}", "", f"{subtotale_ore:.1f}", f"{subtotale_costo:,.2f}"])
-                                data_rows.append(["", "", "", ""]) # Riga vuota per separare i vari operai
+                                data_rows.append(["", "", "", ""])
                                 subtotale_ore = 0.0
                                 subtotale_costo = 0.0
                             
                             if r['operaio'] != operaio_corrente:
                                 operaio_corrente = r['operaio']
                             
-                            # Aggiungi la riga dell'operaio nel cantiere
                             subtotale_ore += float(r['Ore_Totali'])
                             subtotale_costo += float(r['Costo_Totale'])
                             totale_generale_ore += float(r['Ore_Totali'])
@@ -670,16 +664,13 @@ def page_stampe():
                                 Paragraph(f"{r['Costo_Totale']:,.2f}", style_num)
                             ])
                         
-                        # Aggiungi l'ultimo subtotale
                         if operaio_corrente is not None:
                             data_rows.append([f"TOTALE {operaio_corrente.upper()}", "", f"{subtotale_ore:.1f}", f"{subtotale_costo:,.2f}"])
                             data_rows.append(["", "", "", ""])
                         
-                        # Riga Totale Generale Assoluto
                         data_rows.append(["TOTALE GENERALE ASSOLUTO", "", f"{totale_generale_ore:.1f}", f"{totale_generale_costo:,.2f}"])
                         
                         t = Table(data_rows, colWidths=[160, 200, 100, 120], repeatRows=1)
-                        
                         style_cmds = [
                             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
                             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -689,8 +680,6 @@ def page_stampe():
                             ('FONTSIZE', (0, 0), (-1, 0), 9),
                             ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#BDC3C7")),
                         ]
-                        
-                        # Colora le righe di Totale
                         for i, row in enumerate(data_rows):
                             if str(row[0]).startswith("TOTALE") and row[0] != "TOTALE GENERALE ASSOLUTO":
                                 style_cmds.append(('BACKGROUND', (0, i), (-1, i), colors.HexColor("#EAECEE")))
