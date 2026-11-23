@@ -437,9 +437,8 @@ def page_costi():
         
         if not df_operai.empty:
             col3, col4 = st.columns(2)
-            lista_opzioni = [f"{row['nome']} ({row['tipo']})" for _, row in df_operai.iterrows()]
-            operaio_sel_str = col3.selectbox("Operaio", lista_opzioni, key="op_manodopera")
-            operaio_sel = operaio_sel_str.split(" (")[0]
+            lista_nomi_operai = df_operai['nome'].tolist()
+            operaio_sel = col3.selectbox("Operaio", lista_nomi_operai, key="op_manodopera")
             
             if operaio_sel:
                 match_operaio = df_operai[df_operai['nome'] == operaio_sel]
@@ -1017,11 +1016,50 @@ def page_riepilogo():
 
     st.divider()
 
-    # --- SEZIONE 3: NUOVA STAMPA AVANZATA (Periodo, Cantiere, Tipologia) ---
-    st.subheader("📑 Stampa Report Personalizzato")
+    # --- SEZIONE 4: GRAFICO ANDAMENTO ---
+    st.subheader("📈 Andamento Economico")
+    try:
+        res_inc = supabase.table("incassi").select("data, imponibile").execute()
+        res_man = supabase.table("costo_manodopera").select("data, totale").execute()
+        res_mat = supabase.table("costo_materiali").select("data, imponibile").execute()
+        res_amm = supabase.table("costo_amministrativo").select("data, importo").execute()
+        
+        all_movs = []
+        if res_inc.data: all_movs.extend([{'data': r['data'], 'totale': r['imponibile'], 'Tipo': 'Incasso'} for r in res_inc.data])
+        if res_man.data: all_movs.extend([{'data': r['data'], 'totale': r['totale'], 'Tipo': 'Costo'} for r in res_man.data])
+        if res_mat.data: all_movs.extend([{'data': r['data'], 'totale': r['imponibile'], 'Tipo': 'Costo'} for r in res_mat.data])
+        if res_amm.data: all_movs.extend([{'data': r['data'], 'totale': r['importo'], 'Tipo': 'Costo'} for r in res_amm.data])
+        
+        if not all_movs:
+            st.info("Nessun dato disponibile per il grafico.")
+        else:
+            df_mov = pd.DataFrame(all_movs)
+            df_mov['data'] = pd.to_datetime(df_mov['data'])
+            df_mov = df_mov.sort_values('data')
+            df_mov['Incassi Cum'] = df_mov.apply(lambda x: x['totale'] if x['Tipo'] == 'Incasso' else 0, axis=1).cumsum()
+            df_mov['Costi Cum'] = df_mov.apply(lambda x: x['totale'] if x['Tipo'] == 'Costo' else 0, axis=1).cumsum()
+            
+            fig, ax = plt.subplots(figsize=(10, 4))
+            ax.plot(df_mov['data'], df_mov['Incassi Cum'], label='Incassi', color='green', marker='o', linewidth=2)
+            ax.plot(df_mov['data'], df_mov['Costi Cum'], label='Costi', color='red', marker='x', linewidth=2)
+            ax.legend(); ax.grid(True, linestyle='--', alpha=0.6)
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y'))
+            plt.xticks(rotation=45); plt.tight_layout()
+            st.pyplot(fig)
+    except Exception as e: st.error(f"Errore nel grafico: {e}")
+
+def page_stampe():
+    st.title("🖨️ Stampe e Report Personalizzati")
     st.write("Genera un report specifico filtrando per periodo, cantiere e tipologia di costo.")
     
-    with st.expander("Configura il Report", expanded=False):
+    try:
+        df_cantieri = get_cantieri()
+    except:
+        df_cantieri = pd.DataFrame()
+
+    opzioni_cantieri = ["Tutti i cantieri"] + [f"{row['id']} - {row['indirizzo']}" for _, row in df_cantieri.iterrows()] if not df_cantieri.empty else ["Tutti i cantieri"]
+    
+    with st.container():
         col_s1, col_s2 = st.columns(2)
         s_data_ini = col_s1.date_input("Periodo Dal", value=datetime.date.today().replace(day=1), format="DD/MM/YYYY", key="st_data_ini")
         s_data_fin = col_s2.date_input("Periodo Al", value=datetime.date.today(), format="DD/MM/YYYY", key="st_data_fin")
@@ -1029,7 +1067,7 @@ def page_riepilogo():
         col_s3, col_s4 = st.columns(2)
         s_cantiere = col_s3.selectbox("Cantiere", opzioni_cantieri, key="st_cantiere")
         
-        # Recuperiamo le categorie direttamente dal database per evitare problemi di testo
+        # Recuperiamo le categorie direttamente dal database
         try:
             res_cat = supabase.table("categorie_amministrative").select("nome").execute()
             lista_categorie = [c['nome'] for c in res_cat.data]
@@ -1054,14 +1092,12 @@ def page_riepilogo():
                     ripartizione = calcola_quote_amministrative(str(s_data_ini), str(s_data_fin), includi_esterne=True)
                     quota_amm_cantiere = ripartizione['quote'].get(cid_selezionato, 0.0)
 
-                # Filtro Operai
                 if s_tipo in ["Tutti", "Solo Operai", "Operai + Tutte le Categorie Amm."]:
                     for r in res_man.data:
                         if s_cantiere != "Tutti i cantieri" and str(r['cantiere_id']) != s_cantiere.split(" - ")[0]: continue
                         tot_report += float(r['totale'])
                         report_data.append({"Tipo": "Operai", "Data": r['data'], "Cantiere": cant_map.get(r['cantiere_id'], r['cantiere_id']), "Descrizione": f"{r['operaio']} - {r['descrizione']}", "Importo": r['totale']})
 
-                # Filtro Categorie Amministrative
                 cat_da_cercare = []
                 if s_tipo == "Operai + Tutte le Categorie Amm.":
                     cat_da_cercare = lista_categorie
@@ -1118,39 +1154,6 @@ def page_riepilogo():
             except Exception as e:
                 st.error(f"Errore generazione report: {e}")
 
-    st.divider()
-
-    # --- SEZIONE 4: GRAFICO ANDAMENTO ---
-    st.subheader("📈 Andamento Economico")
-    try:
-        res_inc = supabase.table("incassi").select("data, imponibile").execute()
-        res_man = supabase.table("costo_manodopera").select("data, totale").execute()
-        res_mat = supabase.table("costo_materiali").select("data, imponibile").execute()
-        res_amm = supabase.table("costo_amministrativo").select("data, importo").execute()
-        
-        all_movs = []
-        if res_inc.data: all_movs.extend([{'data': r['data'], 'totale': r['imponibile'], 'Tipo': 'Incasso'} for r in res_inc.data])
-        if res_man.data: all_movs.extend([{'data': r['data'], 'totale': r['totale'], 'Tipo': 'Costo'} for r in res_man.data])
-        if res_mat.data: all_movs.extend([{'data': r['data'], 'totale': r['imponibile'], 'Tipo': 'Costo'} for r in res_mat.data])
-        if res_amm.data: all_movs.extend([{'data': r['data'], 'totale': r['importo'], 'Tipo': 'Costo'} for r in res_amm.data])
-        
-        if not all_movs:
-            st.info("Nessun dato disponibile per il grafico.")
-        else:
-            df_mov = pd.DataFrame(all_movs)
-            df_mov['data'] = pd.to_datetime(df_mov['data'])
-            df_mov = df_mov.sort_values('data')
-            df_mov['Incassi Cum'] = df_mov.apply(lambda x: x['totale'] if x['Tipo'] == 'Incasso' else 0, axis=1).cumsum()
-            df_mov['Costi Cum'] = df_mov.apply(lambda x: x['totale'] if x['Tipo'] == 'Costo' else 0, axis=1).cumsum()
-            
-            fig, ax = plt.subplots(figsize=(10, 4))
-            ax.plot(df_mov['data'], df_mov['Incassi Cum'], label='Incassi', color='green', marker='o', linewidth=2)
-            ax.plot(df_mov['data'], df_mov['Costi Cum'], label='Costi', color='red', marker='x', linewidth=2)
-            ax.legend(); ax.grid(True, linestyle='--', alpha=0.6)
-            ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y'))
-            plt.xticks(rotation=45); plt.tight_layout()
-            st.pyplot(fig)
-    except Exception as e: st.error(f"Errore nel grafico: {e}")
 
 # --- NAVIGAZIONE ---
 if not st.session_state.logged_in:
@@ -1167,6 +1170,7 @@ else:
         if st.button("📈 Avanzamento", use_container_width=True, key="sidebar_avanzamento"): st.session_state.current_page = "Avanzamento"; st.rerun()
         if st.button("📊 Riepilogo", use_container_width=True, key="sidebar_riepilogo"): st.session_state.current_page = "Riepilogo"; st.rerun()
         if st.button("⚖️ Bilanci", use_container_width=True, key="sidebar_bilanci"): st.session_state.current_page = "Bilanci"; st.rerun()
+        if st.button("🖨️ Stampe", use_container_width=True, key="sidebar_stampe"): st.session_state.current_page = "Stampe"; st.rerun()
         if st.session_state.is_admin:
             if st.button("👤 Gestione Utenti", use_container_width=True, key="sidebar_utenti"): st.session_state.current_page = "Utenti"; st.rerun()
         st.divider()
@@ -1181,4 +1185,5 @@ else:
     elif st.session_state.current_page == "Avanzamento": page_avanzamento()
     elif st.session_state.current_page == "Riepilogo": page_riepilogo()
     elif st.session_state.current_page == "Bilanci": page_bilanci()
+    elif st.session_state.current_page == "Stampe": page_stampe()
     elif st.session_state.current_page == "Utenti" and st.session_state.is_admin: page_utenti()
