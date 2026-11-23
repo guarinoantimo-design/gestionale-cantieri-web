@@ -1058,6 +1058,7 @@ def page_stampe():
         df_cantieri = pd.DataFrame()
 
     opzioni_cantieri = ["Tutti i cantieri"] + [f"{row['id']} - {row['indirizzo']}" for _, row in df_cantieri.iterrows()] if not df_cantieri.empty else ["Tutti i cantieri"]
+    cant_map = {r['id']: r['indirizzo'] for r in df_cantieri.to_dict('records')} if not df_cantieri.empty else {}
     
     with st.container():
         col_s1, col_s2 = st.columns(2)
