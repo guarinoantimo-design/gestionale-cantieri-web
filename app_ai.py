@@ -949,14 +949,12 @@ def page_riepilogo():
         except Exception as e:
             pass
     else:
-        # Se è selezionato un singolo cantiere, ripartiamo i costi amministrativi in base alle ore
         cid_selezionato = int(filtro_cantiere.split(" - ")[0])
         try:
             ripartizione = calcola_quote_amministrative(str(data_inizio_report), str(data_fine_report), includi_esterne=True)
             quota_amm_cantiere = ripartizione['quote'].get(cid_selezionato, 0.0)
             
             if quota_amm_cantiere > 0:
-                # Aggiungiamo una riga fittizia che rappresenta la quota amministrativa del cantiere
                 costi_list.append({
                     "Tipo": "Amm. Ripartito", 
                     "Data": str(data_fine_report), 
@@ -1034,37 +1032,37 @@ def page_riepilogo():
         
         if st.button("🖨️ Genera PDF Personalizzato", type="primary"):
             try:
-                # Logica di estrazione dati per il report personalizzato
                 report_data = []
                 tot_report = 0.0
                 
-                # Filtro per Operai
-                if "Operai" in s_tipo or s_tipo == "Tutti":
-                    res_man = supabase.table("costo_manodopera").select("*").gte("data", str(s_data_ini)).lte("data", str(s_data_fin)).execute()
+                # Estrazione dati per il report personalizzato
+                res_man = supabase.table("costo_manodopera").select("*").gte("data", str(s_data_ini)).lte("data", str(s_data_fin)).execute()
+                res_amm = supabase.table("costo_amministrativo").select("*").gte("data", str(s_data_ini)).lte("data", str(s_data_fin)).execute()
+                
+                # Calcolo delle quote amministrative se è selezionato un cantiere
+                quota_amm_cantiere = 0.0
+                if s_cantiere != "Tutti i cantieri":
+                    cid_selezionato = int(s_cantiere.split(" - ")[0])
+                    ripartizione = calcola_quote_amministrative(str(s_data_ini), str(s_data_fin), includi_esterne=True)
+                    quota_amm_cantiere = ripartizione['quote'].get(cid_selezionato, 0.0)
+
+                if s_tipo in ["Tutti", "Solo Operai", "Operai + INPS/INAIL/Cassa Edile"]:
                     for r in res_man.data:
                         if s_cantiere != "Tutti i cantieri" and str(r['cantiere_id']) != s_cantiere.split(" - ")[0]: continue
                         tot_report += float(r['totale'])
                         report_data.append({"Tipo": "Operai", "Data": r['data'], "Cantiere": cant_map.get(r['cantiere_id'], r['cantiere_id']), "Descrizione": f"{r['operaio']} - {r['descrizione']}", "Importo": r['totale']})
-                
-                # Filtro per INPS/INAIL/Cassa Edile
-                if "INPS" in s_tipo or s_tipo == "Tutti":
-                    res_amm = supabase.table("costo_amministrativo").select("*").gte("data", str(s_data_ini)).lte("data", str(s_data_fin)).execute()
+
+                if s_tipo in ["Tutti", "Solo INPS/INAIL/Cassa Edile", "Operai + INPS/INAIL/Cassa Edile"]:
+                    parole_chiave = ["inps", "inail", "cassa edile", "cassa"]
                     for r in res_amm.data:
-                        # Parole chiave per identificare i costi contributivi
-                        parole_chiave = ["inps", "inail", "cassa edile", "cassa", "previdenza"]
                         desc_lower = r['descrizione'].lower()
                         if any(p in desc_lower for p in parole_chiave):
-                            # Se filtriamo per cantiere, ripartiamo i costi amministrativi
                             if s_cantiere != "Tutti i cantieri":
-                                # Ripartizione per il cantiere selezionato
-                                ripartizione = calcola_quote_amministrative(str(s_data_ini), str(s_data_fin), includi_esterne=True)
-                                # Prendiamo la quota proporzionale (semplificata per il report)
-                                tot_costi_amm = ripartizione['tot_amm']
-                                if tot_costi_amm > 0:
-                                    # Calcoliamo la proporzione del singolo costo sul totale
+                                # Ripartizione proporzionale del singolo costo sul totale amministrativo
+                                tot_costi_amm = sum(float(x['importo']) for x in res_amm.data)
+                                if tot_costi_amm > 0 and quota_amm_cantiere > 0:
                                     proporzione_costo = float(r['importo']) / tot_costi_amm
-                                    quota_cantiere = ripartizione['quote'].get(int(s_cantiere.split(" - ")[0]), 0.0)
-                                    importo_ripartito = proporzione_costo * quota_cantiere
+                                    importo_ripartito = proporzione_costo * quota_amm_cantiere
                                     tot_report += importo_ripartito
                                     report_data.append({"Tipo": "Contributo", "Data": r['data'], "Cantiere": s_cantiere.split(" - ")[1], "Descrizione": r['descrizione'], "Importo": importo_ripartito})
                             else:
