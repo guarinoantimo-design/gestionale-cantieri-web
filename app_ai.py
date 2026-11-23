@@ -413,7 +413,6 @@ def page_utenti():
 
 def page_stampe():
     from reportlab.platypus import PageBreak
-    import base64
     
     st.title("🖨️ Stampe e Report Personalizzati")
     
@@ -638,22 +637,22 @@ def page_stampe():
                         elements.append(Paragraph(f"Riepilogo Costi per Operaio: dal {formatta_data_italiana(o_data_ini)} al {formatta_data_italiana(o_data_fin)}", styles['Title']))
                         elements.append(Spacer(1, 12))
                         
-                        data_rows = [["Operaio", "Cantiere", "Ore Lavorate", "Costo Totale (€)"]]
-                        
-                        # Inizializzazione sicura delle variabili
+                        # DICHIARAZIONE DELLE VARIABILI PRIMA DELLA TABELLA
                         operaio_corrente = None
-                        totale_generale_ore = 0
-                        totale_generale_costo = 0
-                        subtotale_ore = 0
-                        subtotale_costo = 0
+                        totale_generale_ore = 0.0
+                        totale_generale_costo = 0.0
+                        subtotale_ore = 0.0
+                        subtotale_costo = 0.0
+                        
+                        data_rows = [["Operaio", "Cantiere", "Ore Lavorate", "Costo Totale (€)"]]
                         
                         for _, r in df_raggruppato.iterrows():
                             # Se cambia l'operaio, aggiungiamo una riga di subtotale e resettiamo
                             if operaio_corrente is not None and r['operaio'] != operaio_corrente:
                                 data_rows.append([f"TOTALE {operaio_corrente.upper()}", "", f"{subtotale_ore:.1f}", f"{subtotale_costo:,.2f}"])
                                 data_rows.append(["", "", "", ""]) # Riga vuota per separare i vari operai
-                                subtotale_ore = 0
-                                subtotale_costo = 0
+                                subtotale_ore = 0.0
+                                subtotale_costo = 0.0
                             
                             if r['operaio'] != operaio_corrente:
                                 operaio_corrente = r['operaio']
