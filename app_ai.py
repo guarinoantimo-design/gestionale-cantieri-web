@@ -1193,10 +1193,15 @@ def page_stampe():
                     tot_tutti_amm = df_rep[~df_rep['Tipo'].isin(['Operai', 'Materiale'])]['Importo'].sum()
                     tot_altri_amm = tot_tutti_amm - (tot_inps + tot_inail + tot_cassa)
 
-                    # Intestazione della matrice
-                                        # Intestazione della matrice (con testo a capo)
+                    # Intestazione della matrice (con testo a capo e grassetto corretto)
                     matrix_data = [
-                        ["", Paragraph("<b>Costi Manodopera<br/>Diretti</b>", style_cell), Paragraph("<b>Costi Manodopera<br/>Indiretti</b>", style_cell), "<b>Materiali</b>", "<b>Altri Amministrativi</b>"]
+                        [
+                            "", 
+                            Paragraph("<b>Costi Manodopera<br/>Diretti</b>", style_cell), 
+                            Paragraph("<b>Costi Manodopera<br/>Indiretti</b>", style_cell), 
+                            Paragraph("<b>Materiali</b>", style_cell), 
+                            Paragraph("<b>Altri Amministrativi</b>", style_cell)
+                        ]
                     ]
                     
                     # Righe della matrice
