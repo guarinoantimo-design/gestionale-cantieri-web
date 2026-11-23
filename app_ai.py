@@ -1093,12 +1093,14 @@ def page_stampe():
                     ripartizione = calcola_quote_amministrative(str(s_data_ini), str(s_data_fin), includi_esterne=True)
                     quota_amm_cantiere = ripartizione['quote'].get(cid_selezionato, 0.0)
 
+                # Filtro Operai
                 if s_tipo in ["Tutti", "Solo Operai", "Operai + Tutte le Categorie Amm."]:
                     for r in res_man.data:
                         if s_cantiere != "Tutti i cantieri" and str(r['cantiere_id']) != s_cantiere.split(" - ")[0]: continue
                         tot_report += float(r['totale'])
                         report_data.append({"Tipo": "Operai", "Data": r['data'], "Cantiere": cant_map.get(r['cantiere_id'], r['cantiere_id']), "Descrizione": f"{r['operaio']} - {r['descrizione']}", "Importo": r['totale']})
 
+                # Filtro Categorie Amministrative
                 cat_da_cercare = []
                 if s_tipo == "Operai + Tutte le Categorie Amm.":
                     cat_da_cercare = lista_categorie
@@ -1114,10 +1116,10 @@ def page_stampe():
                                     proporzione_costo = float(r['importo']) / tot_costi_amm
                                     importo_ripartito = proporzione_costo * quota_amm_cantiere
                                     tot_report += importo_ripartito
-                                    report_data.append({"Tipo": "Contributo", "Data": r['data'], "Cantiere": s_cantiere.split(" - ")[1], "Descrizione": r['descrizione'], "Importo": importo_ripartito})
+                                    report_data.append({"Tipo": r['descrizione'], "Data": r['data'], "Cantiere": s_cantiere.split(" - ")[1], "Descrizione": r['descrizione'], "Importo": importo_ripartito})
                             else:
                                 tot_report += float(r['importo'])
-                                report_data.append({"Tipo": "Contributo", "Data": r['data'], "Cantiere": "Generale", "Descrizione": r['descrizione'], "Importo": r['importo']})
+                                report_data.append({"Tipo": r['descrizione'], "Data": r['data'], "Cantiere": "Generale", "Descrizione": r['descrizione'], "Importo": r['importo']})
                 
                 if not report_data:
                     st.info("Nessun dato trovato per questa combinazione di filtri.")
@@ -1133,15 +1135,12 @@ def page_stampe():
                     elements.append(Paragraph(f"Cantiere: {s_cantiere} | Tipologia: {s_tipo}", styles['Normal']))
                     elements.append(Spacer(1, 12))
                     
-                                        # Prepariamo le righe della tabella principale
                     data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Importo (€)"]]
                     for _, r in df_rep.iterrows():
                         data_rows.append([r['Tipo'], formatta_data_italiana(r['Data']), Paragraph(str(r['Cantiere']), style_cell), Paragraph(str(r['Descrizione']), style_cell), f"{r['Importo']:,.2f}"])
                     
-                    # Riga del Totale Generale in fondo alla tabella
                     data_rows.append(["", "", "", "TOTALE GENERALE", f"{tot_report:,.2f}"])
                     
-                    # Creazione tabella principale
                     t = Table(data_rows, colWidths=[80, 70, 180, 200, 80], repeatRows=1)
                     t.setStyle(TableStyle([
                         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
@@ -1154,23 +1153,19 @@ def page_stampe():
                     ]))
                     elements.append(t)
                     
-                    # --- NUOVO BLOCCO: Riepilogo per Singola Voce ---
+                    # --- Riepilogo per Voce ---
                     elements.append(Spacer(1, 20))
                     elements.append(Paragraph("<b>Riepilogo per Voce</b>", styles['Heading2']))
                     elements.append(Spacer(1, 8))
                     
-                    # Raggruppa i dati per 'Tipo' e somma gli importi
                     df_riepilogo = df_rep.groupby('Tipo')['Importo'].sum().reset_index()
                     
-                    # Crea la tabella di riepilogo
                     riepilogo_rows = [["Voce di Costo", "Totale Parziale (€)"]]
                     for _, row in df_riepilogo.iterrows():
                         riepilogo_rows.append([row['Tipo'], f"{row['Importo']:,.2f}"])
                     
-                    # Aggiungi il totale generale alla fine
                     riepilogo_rows.append(["TOTALE GENERALE", f"{tot_report:,.2f}"])
                     
-                    # Stile della tabella di riepilogo (più compatta)
                     t_riepilogo = Table(riepilogo_rows, colWidths=[200, 100])
                     t_riepilogo.setStyle(TableStyle([
                         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#34495E")),
@@ -1188,6 +1183,8 @@ def page_stampe():
                     doc.build(elements)
                     st.success(f"PDF generato: {filename}")
                     with open(filename, "rb") as f: st.download_button("⬇️ Scarica il PDF", data=f, file_name=filename, mime="application/pdf")
+            except Exception as e:
+                st.error(f"Errore generazione report: {e}")
 
 
 # --- NAVIGAZIONE ---
