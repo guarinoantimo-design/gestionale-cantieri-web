@@ -443,7 +443,12 @@ def page_costi():
             if operaio_sel:
                 match_operaio = df_operai[df_operai['nome'] == operaio_sel]
                 if not match_operaio.empty:
+                    tipo_operaio = match_operaio['tipo'].values[0]
+                    # Mostriamo il tipo (Interno/Esterno)
+                    col3.info(f"Tipo: **{tipo_operaio}**")
+                    
                     costo_standard = match_operaio['costo_orario'].values[0]
+                    # Usiamo una chiave dinamica per evitare che Streamlit "ricordi" il vecchio costo
                     costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=float(costo_standard), key=f"costo_orario_{operaio_sel}")
                 else:
                     costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=0.0, key="costo_orario_vuoto")
@@ -626,9 +631,7 @@ def page_costi():
                     styles = getSampleStyleSheet()
                     style_cell = ParagraphStyle('cell_style', parent=styles['Normal'], fontSize=8, leading=10, alignment=0)
                     
-                    elements.append(Paragraph(f"Report Personalizzato dal {formatta_data_italiana(s_data_ini)} al {formatta_data_italiana(s_data_fin)}", styles['Title']))
-                    elements.append(Paragraph(f"<b>Cantiere:</b> {s_cantiere}", styles['Heading3']))
-                    elements.append(Paragraph(f"<b>Tipologia Costo:</b> {s_tipo}", styles['Normal']))
+                    elements.append(Paragraph(f"Riepilogo Costi dal {formatta_data_italiana(data_inizio)} al {formatta_data_italiana(data_fine)}", styles['Title']))
                     elements.append(Spacer(1, 12))
                     
                     data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Totale (€)"]]
@@ -650,6 +653,7 @@ def page_costi():
                     doc.build(elements)
                     st.success(f"PDF generato con successo: {filename}")
                     with open(filename, "rb") as f: st.download_button("⬇️ Scarica il PDF", data=f, file_name=filename, mime="application/pdf")
+                except Exception as e: st.error(f"Errore PDF: {e}")
                 except Exception as e: st.error(f"Errore PDF: {e}")
 
 def page_incassi():
