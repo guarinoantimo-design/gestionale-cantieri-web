@@ -936,13 +936,36 @@ def page_riepilogo():
             if filtro_cantiere != "Tutti i cantieri" and str(r['cantiere_id']) != filtro_cantiere.split(" - ")[0]: continue
             if filtro_descrizione and filtro_descrizione.lower() not in r['fornitore'].lower(): continue
             costi_list.append({"Tipo": "Materiale", "Data": r['data'], "Cantiere": r['cantiere_id'], "Descrizione": r['fornitore'], "Importo": r['imponibile']})
-            
-        res = supabase.table("costo_amministrativo").select("*").gte("data", str(data_inizio_report)).lte("data", str(data_fine_report)).execute()
-        for r in res.data:
-            if filtro_descrizione and filtro_descrizione.lower() not in r['descrizione'].lower(): continue
-            costi_list.append({"Tipo": "Amministrativo", "Data": r['data'], "Cantiere": "Generale", "Descrizione": r['descrizione'], "Importo": r['importo']})
     except Exception as e:
         st.error(f"Errore caricamento costi: {e}")
+
+    # Gestione Costi Amministrativi (Ripartiti se c'è un singolo cantiere)
+    if filtro_cantiere == "Tutti i cantieri":
+        try:
+            res = supabase.table("costo_amministrativo").select("*").gte("data", str(data_inizio_report)).lte("data", str(data_fine_report)).execute()
+            for r in res.data:
+                if filtro_descrizione and filtro_descrizione.lower() not in r['descrizione'].lower(): continue
+                costi_list.append({"Tipo": "Amministrativo", "Data": r['data'], "Cantiere": "Generale", "Descrizione": r['descrizione'], "Importo": r['importo']})
+        except Exception as e:
+            pass
+    else:
+        # Se è selezionato un singolo cantiere, ripartiamo i costi amministrativi in base alle ore
+        cid_selezionato = int(filtro_cantiere.split(" - ")[0])
+        try:
+            ripartizione = calcola_quote_amministrative(str(data_inizio_report), str(data_fine_report), includi_esterne=True)
+            quota_amm_cantiere = ripartizione['quote'].get(cid_selezionato, 0.0)
+            
+            if quota_amm_cantiere > 0:
+                # Aggiungiamo una riga fittizia che rappresenta la quota amministrativa del cantiere
+                costi_list.append({
+                    "Tipo": "Amm. Ripartito", 
+                    "Data": str(data_fine_report), 
+                    "Cantiere": filtro_cantiere.split(" - ")[1], 
+                    "Descrizione": "Quota costi amministrativi (calcolata su ore lavorate)", 
+                    "Importo": quota_amm_cantiere
+                })
+        except Exception as e:
+            st.error(f"Errore calcolo costi amministrativi: {e}")
 
     if not costi_list:
         st.info("Nessun costo trovato con i filtri selezionati.")
@@ -996,7 +1019,97 @@ def page_riepilogo():
 
     st.divider()
 
-    # --- SEZIONE 2: GRAFICO ANDAMENTO GLOBALE O PER CANTIERE ---
+    # --- SEZIONE 3: NUOVA STAMPA AVANZATA (Periodo, Cantiere, Tipologia) ---
+    st.subheader("📑 Stampa Report Personalizzato")
+    st.write("Genera un report specifico filtrando per periodo, cantiere e tipologia di costo.")
+    
+    with st.expander("Configura il Report", expanded=False):
+        col_s1, col_s2 = st.columns(2)
+        s_data_ini = col_s1.date_input("Periodo Dal", value=datetime.date.today().replace(day=1), format="DD/MM/YYYY", key="st_data_ini")
+        s_data_fin = col_s2.date_input("Periodo Al", value=datetime.date.today(), format="DD/MM/YYYY", key="st_data_fin")
+        
+        col_s3, col_s4 = st.columns(2)
+        s_cantiere = col_s3.selectbox("Cantiere", opzioni_cantieri, key="st_cantiere")
+        s_tipo = col_s4.selectbox("Tipologia Costo", ["Tutti", "Solo Operai", "Solo INPS/INAIL/Cassa Edile", "Operai + INPS/INAIL/Cassa Edile"], key="st_tipo")
+        
+        if st.button("🖨️ Genera PDF Personalizzato", type="primary"):
+            try:
+                # Logica di estrazione dati per il report personalizzato
+                report_data = []
+                tot_report = 0.0
+                
+                # Filtro per Operai
+                if "Operai" in s_tipo or s_tipo == "Tutti":
+                    res_man = supabase.table("costo_manodopera").select("*").gte("data", str(s_data_ini)).lte("data", str(s_data_fin)).execute()
+                    for r in res_man.data:
+                        if s_cantiere != "Tutti i cantieri" and str(r['cantiere_id']) != s_cantiere.split(" - ")[0]: continue
+                        tot_report += float(r['totale'])
+                        report_data.append({"Tipo": "Operai", "Data": r['data'], "Cantiere": cant_map.get(r['cantiere_id'], r['cantiere_id']), "Descrizione": f"{r['operaio']} - {r['descrizione']}", "Importo": r['totale']})
+                
+                # Filtro per INPS/INAIL/Cassa Edile
+                if "INPS" in s_tipo or s_tipo == "Tutti":
+                    res_amm = supabase.table("costo_amministrativo").select("*").gte("data", str(s_data_ini)).lte("data", str(s_data_fin)).execute()
+                    for r in res_amm.data:
+                        # Parole chiave per identificare i costi contributivi
+                        parole_chiave = ["inps", "inail", "cassa edile", "cassa", "previdenza"]
+                        desc_lower = r['descrizione'].lower()
+                        if any(p in desc_lower for p in parole_chiave):
+                            # Se filtriamo per cantiere, ripartiamo i costi amministrativi
+                            if s_cantiere != "Tutti i cantieri":
+                                # Ripartizione per il cantiere selezionato
+                                ripartizione = calcola_quote_amministrative(str(s_data_ini), str(s_data_fin), includi_esterne=True)
+                                # Prendiamo la quota proporzionale (semplificata per il report)
+                                tot_costi_amm = ripartizione['tot_amm']
+                                if tot_costi_amm > 0:
+                                    # Calcoliamo la proporzione del singolo costo sul totale
+                                    proporzione_costo = float(r['importo']) / tot_costi_amm
+                                    quota_cantiere = ripartizione['quote'].get(int(s_cantiere.split(" - ")[0]), 0.0)
+                                    importo_ripartito = proporzione_costo * quota_cantiere
+                                    tot_report += importo_ripartito
+                                    report_data.append({"Tipo": "Contributo", "Data": r['data'], "Cantiere": s_cantiere.split(" - ")[1], "Descrizione": r['descrizione'], "Importo": importo_ripartito})
+                            else:
+                                tot_report += float(r['importo'])
+                                report_data.append({"Tipo": "Contributo", "Data": r['data'], "Cantiere": "Generale", "Descrizione": r['descrizione'], "Importo": r['importo']})
+                
+                if not report_data:
+                    st.info("Nessun dato trovato per questa combinazione di filtri.")
+                else:
+                    df_rep = pd.DataFrame(report_data).sort_values("Data")
+                    filename = f"Report_Personalizzato_{datetime.date.today()}.pdf"
+                    doc = SimpleDocTemplate(filename, pagesize=landscape(A4))
+                    elements = []
+                    styles = getSampleStyleSheet()
+                    style_cell = ParagraphStyle('cell_style', parent=styles['Normal'], fontSize=8, leading=10, alignment=0)
+                    
+                    elements.append(Paragraph(f"Report Personalizzato dal {formatta_data_italiana(s_data_ini)} al {formatta_data_italiana(s_data_fin)}", styles['Title']))
+                    elements.append(Paragraph(f"Cantiere: {s_cantiere} | Tipologia: {s_tipo}", styles['Normal']))
+                    elements.append(Spacer(1, 12))
+                    
+                    data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Importo (€)"]]
+                    for _, r in df_rep.iterrows():
+                        data_rows.append([r['Tipo'], formatta_data_italiana(r['Data']), Paragraph(str(r['Cantiere']), style_cell), Paragraph(str(r['Descrizione']), style_cell), f"{r['Importo']:,.2f}"])
+                    data_rows.append(["", "", "", "TOTALE GENERALE", f"{tot_report:,.2f}"])
+                    
+                    t = Table(data_rows, colWidths=[80, 70, 180, 200, 80], repeatRows=1)
+                    t.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#F4F6F7")),
+                        ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#BDC3C7")),
+                        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                    ]))
+                    elements.append(t)
+                    doc.build(elements)
+                    st.success(f"PDF generato: {filename}")
+                    with open(filename, "rb") as f: st.download_button("⬇️ Scarica il PDF", data=f, file_name=filename, mime="application/pdf")
+            except Exception as e:
+                st.error(f"Errore generazione report: {e}")
+
+    st.divider()
+
+    # --- SEZIONE 4: GRAFICO ANDAMENTO ---
     st.subheader("📈 Andamento Economico")
     try:
         res_inc = supabase.table("incassi").select("data, imponibile").execute()
