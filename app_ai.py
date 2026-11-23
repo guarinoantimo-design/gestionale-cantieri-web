@@ -437,14 +437,14 @@ def page_costi():
         
         if not df_operai.empty:
             col3, col4 = st.columns(2)
-            lista_nomi_operai = df_operai['nome'].tolist()
-            operaio_sel = col3.selectbox("Operaio", lista_nomi_operai, key="op_manodopera")
+            lista_opzioni = [f"{row['nome']} ({row['tipo']})" for _, row in df_operai.iterrows()]
+            operaio_sel_str = col3.selectbox("Operaio", lista_opzioni, key="op_manodopera")
+            operaio_sel = operaio_sel_str.split(" (")[0]
             
             if operaio_sel:
                 match_operaio = df_operai[df_operai['nome'] == operaio_sel]
                 if not match_operaio.empty:
                     costo_standard = match_operaio['costo_orario'].values[0]
-                    # Chiave dinamica per evitare che Streamlit "ricordi" il vecchio costo
                     costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=float(costo_standard), key=f"costo_orario_{operaio_sel}")
                 else:
                     costo_orario = col4.number_input("Costo Orario (€)", min_value=0.0, step=1.0, value=0.0, key="costo_orario_vuoto")
@@ -903,6 +903,8 @@ def page_bilanci():
 
 def page_riepilogo():
     st.title("📊 Riepilogo e Grafici")
+    
+    # --- SEZIONE 1: REPORT COSTI DETTAGLIATO ---
     st.subheader("📋 Report Costi Dettagliato")
     st.write("Filtra per periodo, Cantiere, Tipo di Costo e Descrizione per un'analisi approfondita.")
 
@@ -910,7 +912,7 @@ def page_riepilogo():
     data_inizio_report = col_d1.date_input("Dal", value=datetime.date.today().replace(day=1), format="DD/MM/YYYY", key="data_inizio_report")
     data_fine_report = col_d2.date_input("Al", value=datetime.date.today(), format="DD/MM/YYYY", key="data_fine_report")
 
-    col_r1, col_r2, col_r3 = st.columns(3)
+    col_r1, col_r2 = st.columns(2)
     try:
         df_cantieri = get_cantieri()
     except:
@@ -918,31 +920,27 @@ def page_riepilogo():
 
     opzioni_cantieri = ["Tutti i cantieri"] + [f"{row['id']} - {row['indirizzo']}" for _, row in df_cantieri.iterrows()] if not df_cantieri.empty else ["Tutti i cantieri"]
     filtro_cantiere = col_r1.selectbox("Seleziona Cantiere", opzioni_cantieri, key="filtro_cantiere_report")
-    filtro_tipo_costo = col_r2.selectbox("Tipo di Costo", ["Tutti", "Personale", "Materiale", "Amministrativo", "Personale + Materiale"], key="filtro_tipo_report")
-    filtro_descrizione = col_r3.text_input("Cerca nella Descrizione", placeholder="Es. massetto, fattura...", key="filtro_desc_report")
+    filtro_descrizione = col_r2.text_input("Cerca nella Descrizione", placeholder="Es. massetto, fattura...", key="filtro_desc_report")
     
     costi_list = []
     try:
-        if filtro_tipo_costo in ["Tutti", "Personale", "Personale + Materiale"]:
-            res = supabase.table("costo_manodopera").select("*").gte("data", str(data_inizio_report)).lte("data", str(data_fine_report)).execute()
-            for r in res.data:
-                if filtro_cantiere != "Tutti i cantieri" and str(r['cantiere_id']) != filtro_cantiere.split(" - ")[0]: continue
-                desc = r['operaio'] + " " + (r['descrizione'] or "")
-                if filtro_descrizione and filtro_descrizione.lower() not in desc.lower(): continue
-                costi_list.append({"Tipo": "Personale", "Data": r['data'], "Cantiere": r['cantiere_id'], "Descrizione": desc, "Importo": r['totale']})
-                
-        if filtro_tipo_costo in ["Tutti", "Materiale", "Personale + Materiale"]:
-            res = supabase.table("costo_materiali").select("*").gte("data", str(data_inizio_report)).lte("data", str(data_fine_report)).execute()
-            for r in res.data:
-                if filtro_cantiere != "Tutti i cantieri" and str(r['cantiere_id']) != filtro_cantiere.split(" - ")[0]: continue
-                if filtro_descrizione and filtro_descrizione.lower() not in r['fornitore'].lower(): continue
-                costi_list.append({"Tipo": "Materiale", "Data": r['data'], "Cantiere": r['cantiere_id'], "Descrizione": r['fornitore'], "Importo": r['imponibile']})
-                
-        if filtro_tipo_costo in ["Tutti", "Amministrativo"]:
-            res = supabase.table("costo_amministrativo").select("*").gte("data", str(data_inizio_report)).lte("data", str(data_fine_report)).execute()
-            for r in res.data:
-                if filtro_descrizione and filtro_descrizione.lower() not in r['descrizione'].lower(): continue
-                costi_list.append({"Tipo": "Amministrativo", "Data": r['data'], "Cantiere": "Generale", "Descrizione": r['descrizione'], "Importo": r['importo']})
+        res = supabase.table("costo_manodopera").select("*").gte("data", str(data_inizio_report)).lte("data", str(data_fine_report)).execute()
+        for r in res.data:
+            if filtro_cantiere != "Tutti i cantieri" and str(r['cantiere_id']) != filtro_cantiere.split(" - ")[0]: continue
+            desc = r['operaio'] + " " + (r['descrizione'] or "")
+            if filtro_descrizione and filtro_descrizione.lower() not in desc.lower(): continue
+            costi_list.append({"Tipo": "Personale", "Data": r['data'], "Cantiere": r['cantiere_id'], "Descrizione": desc, "Importo": r['totale']})
+            
+        res = supabase.table("costo_materiali").select("*").gte("data", str(data_inizio_report)).lte("data", str(data_fine_report)).execute()
+        for r in res.data:
+            if filtro_cantiere != "Tutti i cantieri" and str(r['cantiere_id']) != filtro_cantiere.split(" - ")[0]: continue
+            if filtro_descrizione and filtro_descrizione.lower() not in r['fornitore'].lower(): continue
+            costi_list.append({"Tipo": "Materiale", "Data": r['data'], "Cantiere": r['cantiere_id'], "Descrizione": r['fornitore'], "Importo": r['imponibile']})
+            
+        res = supabase.table("costo_amministrativo").select("*").gte("data", str(data_inizio_report)).lte("data", str(data_fine_report)).execute()
+        for r in res.data:
+            if filtro_descrizione and filtro_descrizione.lower() not in r['descrizione'].lower(): continue
+            costi_list.append({"Tipo": "Amministrativo", "Data": r['data'], "Cantiere": "Generale", "Descrizione": r['descrizione'], "Importo": r['importo']})
     except Exception as e:
         st.error(f"Errore caricamento costi: {e}")
 
@@ -972,7 +970,7 @@ def page_riepilogo():
                 style_cell = ParagraphStyle('cell_style', parent=styles['Normal'], fontSize=8, leading=10, alignment=0)
                 
                 elements.append(Paragraph(f"Report Costi dal {formatta_data_italiana(data_inizio_report)} al {formatta_data_italiana(data_fine_report)}", styles['Title']))
-                elements.append(Paragraph(f"Filtro: {filtro_tipo_costo} | {filtro_cantiere}", styles['Normal']))
+                elements.append(Paragraph(f"Filtro: Cantiere: {filtro_cantiere} | Ricerca: {filtro_descrizione}", styles['Normal']))
                 elements.append(Spacer(1, 12))
                 
                 data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Importo (€)"]]
@@ -997,16 +995,20 @@ def page_riepilogo():
             except Exception as e: st.error(f"Errore PDF: {e}")
 
     st.divider()
-    st.subheader("📈 Andamento Economico Globale")
+
+    # --- SEZIONE 2: GRAFICO ANDAMENTO GLOBALE O PER CANTIERE ---
+    st.subheader("📈 Andamento Economico")
     try:
         res_inc = supabase.table("incassi").select("data, imponibile").execute()
         res_man = supabase.table("costo_manodopera").select("data, totale").execute()
         res_mat = supabase.table("costo_materiali").select("data, imponibile").execute()
+        res_amm = supabase.table("costo_amministrativo").select("data, importo").execute()
         
         all_movs = []
         if res_inc.data: all_movs.extend([{'data': r['data'], 'totale': r['imponibile'], 'Tipo': 'Incasso'} for r in res_inc.data])
         if res_man.data: all_movs.extend([{'data': r['data'], 'totale': r['totale'], 'Tipo': 'Costo'} for r in res_man.data])
         if res_mat.data: all_movs.extend([{'data': r['data'], 'totale': r['imponibile'], 'Tipo': 'Costo'} for r in res_mat.data])
+        if res_amm.data: all_movs.extend([{'data': r['data'], 'totale': r['importo'], 'Tipo': 'Costo'} for r in res_amm.data])
         
         if not all_movs:
             st.info("Nessun dato disponibile per il grafico.")
