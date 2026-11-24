@@ -34,6 +34,13 @@ def formatta_data_italiana(data_str):
     except:
         return str(data_str)
 
+# --- FUNZIONE PULSANTE TORNA ALLA HOME ---
+def torna_alla_home():
+    if st.button("⬅️ Torna alla Home", key=f"home_btn_{st.session_state.get('current_page', '')}"):
+        st.session_state.current_page = "Home"
+        st.rerun()
+    st.divider()
+
 # --- AUTENTICAZIONE ---
 def verify_login(username, password):
     try:
@@ -163,17 +170,34 @@ def page_home():
 
     st.divider()
     st.subheader("🚀 Accessi Rapidi")
-    col_btn1, col_btn2 = st.columns(2)
+    
+    # Riga 1: Cantieri, Costi, Avanzamento
+    col_btn1, col_btn2, col_btn3 = st.columns(3)
     with col_btn1:
         if st.button("📋 Inserisci Cantieri", use_container_width=True, key="home_btn_cantieri"): st.session_state.current_page = "Cantieri"; st.rerun()
-        if st.button("📉 Inserisci Costi", use_container_width=True, key="home_btn_costi"): st.session_state.current_page = "Costi"; st.rerun()
-        if st.button("📈 Avanzamento Cantieri", use_container_width=True, key="home_btn_avanzamento"): st.session_state.current_page = "Avanzamento"; st.rerun()
     with col_btn2:
+        if st.button("📉 Inserisci Costi", use_container_width=True, key="home_btn_costi"): st.session_state.current_page = "Costi"; st.rerun()
+    with col_btn3:
+        if st.button("📈 Avanzamento Cantieri", use_container_width=True, key="home_btn_avanzamento"): st.session_state.current_page = "Avanzamento"; st.rerun()
+
+    # Riga 2: Anagrafica, Incassi, Riepilogo
+    col_btn4, col_btn5, col_btn6 = st.columns(3)
+    with col_btn4:
         if st.button("👥 Anagrafica", use_container_width=True, key="home_btn_anagrafiche"): st.session_state.current_page = "Anagrafiche"; st.rerun()
+    with col_btn5:
         if st.button("💰 Incassi", use_container_width=True, key="home_btn_incassi"): st.session_state.current_page = "Incassi"; st.rerun()
+    with col_btn6:
         if st.button("📊 Riepilogo", use_container_width=True, key="home_btn_riepilogo"): st.session_state.current_page = "Riepilogo"; st.rerun()
 
+    # Riga 3: Bilanci e Stampe (NUOVI PULSANTI)
+    col_btn7, col_btn8 = st.columns(2)
+    with col_btn7:
+        if st.button("⚖️ Bilanci", use_container_width=True, key="home_btn_bilanci"): st.session_state.current_page = "Bilanci"; st.rerun()
+    with col_btn8:
+        if st.button("🖨️ Stampe", use_container_width=True, key="home_btn_stampe"): st.session_state.current_page = "Stampe"; st.rerun()
+
 def page_cantieri():
+    torna_alla_home()
     st.title("📋 Gestione Cantieri")
     with st.expander("➕ Aggiungi Nuovo Cantiere"):
         with st.form("nuovo_cantiere_form", clear_on_submit=True):
@@ -250,6 +274,7 @@ def page_cantieri():
         st.info("Nessun cantiere presente.")
 
 def page_anagrafiche():
+    torna_alla_home()
     st.title("👥 Anagrafiche Operai, Fornitori e Categorie Spese")
     tab1, tab2, tab3 = st.tabs(["Operai", "Fornitori", "Categorie Amministrative"])
     
@@ -363,6 +388,7 @@ def page_anagrafiche():
                     st.success("Categoria eliminata!"); st.rerun()
 
 def page_utenti():
+    torna_alla_home()
     st.title("👤 Gestione Utenti")
     with st.expander("➕ Nuovo Utente"):
         with st.form("nuovo_utente", clear_on_submit=True):
@@ -412,6 +438,7 @@ def page_utenti():
                     st.success("Utente eliminato!"); st.rerun()
 
 def page_costi():
+    torna_alla_home()
     st.title("📉 Inserimento Costi")
     try:
         df_cantieri = get_cantieri()
@@ -444,6 +471,7 @@ def page_costi():
                 match_operaio = df_operai[df_operai['nome'] == operaio_sel]
                 if not match_operaio.empty:
                     tipo_operaio = match_operaio['tipo'].values[0]
+                    # Mostriamo il tipo (Interno/Esterno)
                     col3.info(f"Tipo: **{tipo_operaio}**")
                     
                     costo_standard = match_operaio['costo_orario'].values[0]
@@ -654,6 +682,7 @@ def page_costi():
                 except Exception as e: st.error(f"Errore PDF: {e}")
 
 def page_incassi():
+    torna_alla_home()
     st.title("💰 Gestione Incassi")
     df_cantieri = get_cantieri()
     if df_cantieri.empty:
@@ -779,6 +808,7 @@ def page_incassi():
             st.markdown(f"### Totale Incassi Filtrati: **€ {df['totale'].sum():,.2f}** (Imponibile: € {df['imponibile'].sum():,.2f})")
 
 def page_avanzamento():
+    torna_alla_home()
     st.title("📈 Avanzamento Lavori (Calcolo Automatico)")
     st.write("L'avanzamento lavori è calcolato in base agli incassi rispetto all'importo contrattuale.")
     try:
@@ -802,6 +832,7 @@ def page_avanzamento():
     except Exception as e: st.error(f"Errore: {e}")
 
 def page_bilanci():
+    torna_alla_home()
     st.title("⚖️ Bilanci per Cantiere")
     with st.expander("🔍 Filtri", expanded=True):
         col1, col2, col3 = st.columns([1, 1, 1])
@@ -904,6 +935,7 @@ def page_bilanci():
     except Exception as e: st.error(f"Errore nel calcolo bilanci: {e}")
 
 def page_riepilogo():
+    torna_alla_home()
     st.title("📊 Riepilogo e Grafici")
     
     # --- SEZIONE 1: REPORT COSTI DETTAGLIATO ---
@@ -1052,8 +1084,7 @@ def page_riepilogo():
     except Exception as e: st.error(f"Errore nel grafico: {e}")
 
 def page_stampe():
-    from reportlab.platypus import PageBreak
-    
+    torna_alla_home()
     st.title("🖨️ Stampe e Report Personalizzati")
     
     tab1, tab2 = st.tabs(["📄 Report Costi per Cantiere", "👷 Riepilogo Costi per Operaio"])
@@ -1142,7 +1173,7 @@ def page_stampe():
                                     report_data.append({"Tipo": r['descrizione'], "Data": r['data'], "Cantiere": "Generale", "Descrizione": r['descrizione'], "Importo": r['importo']})
                     
                     if not report_data:
-                        st.warning("Nessun dato trovato per questa combinazione di filtri.")
+                        st.warning("Nessun dato trovato.")
                     else:
                         df_rep = pd.DataFrame(report_data).sort_values("Data")
                         filename = f"Report_Cantiere_{datetime.date.today()}.pdf"
@@ -1156,8 +1187,7 @@ def page_stampe():
                             canvas.saveState()
                             canvas.setFont('Helvetica', 8)
                             canvas.setFillColor(colors.grey)
-                            testo_pie = f"Cantiere: {s_cantiere}  |  Tipologia: {s_tipo}  |  Pagina {doc.page}"
-                            canvas.drawString(30, 20, testo_pie)
+                            canvas.drawString(30, 20, f"Cantiere: {s_cantiere} | Tipologia: {s_tipo} | Pagina {doc.page}")
                             canvas.restoreState()
 
                         data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Importo (€)"]]
@@ -1171,12 +1201,8 @@ def page_stampe():
                             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
                             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
                             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                            ('FONTSIZE', (0, 0), (-1, 0), 8),
-                            ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#F4F6F7")),
                             ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#BDC3C7")),
-                            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
                         ]))
                         elements.append(t)
                         
