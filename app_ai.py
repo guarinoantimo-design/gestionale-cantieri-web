@@ -1052,6 +1052,8 @@ def page_riepilogo():
     except Exception as e: st.error(f"Errore nel grafico: {e}")
 
 def page_stampe():
+    from reportlab.platypus import PageBreak
+    
     st.title("🖨️ Stampe e Report Personalizzati")
     
     tab1, tab2 = st.tabs(["📄 Report Costi per Cantiere", "👷 Riepilogo Costi per Operaio"])
@@ -1083,8 +1085,11 @@ def page_stampe():
                 lista_categorie = []
                 
             opzioni_tipologia = [
-                "Tutti", "Solo Operai", "Solo Materiale", 
-                "Operai + Materiali", "Operai + Materiali + Tutte le Categorie Amm."
+                "Tutti", 
+                "Solo Operai", 
+                "Solo Materiale", 
+                "Operai + Materiali", 
+                "Operai + Materiali + Tutte le Categorie Amm."
             ] + [f"Solo {cat}" for cat in lista_categorie]
             
             s_tipo = col_s4.selectbox("Tipologia Costo", opzioni_tipologia, key="st_tipo")
@@ -1137,7 +1142,7 @@ def page_stampe():
                                     report_data.append({"Tipo": r['descrizione'], "Data": r['data'], "Cantiere": "Generale", "Descrizione": r['descrizione'], "Importo": r['importo']})
                     
                     if not report_data:
-                        st.warning("Nessun dato trovato.")
+                        st.warning("Nessun dato trovato per questa combinazione di filtri.")
                     else:
                         df_rep = pd.DataFrame(report_data).sort_values("Data")
                         filename = f"Report_Cantiere_{datetime.date.today()}.pdf"
@@ -1151,7 +1156,8 @@ def page_stampe():
                             canvas.saveState()
                             canvas.setFont('Helvetica', 8)
                             canvas.setFillColor(colors.grey)
-                            canvas.drawString(30, 20, f"Cantiere: {s_cantiere} | Tipologia: {s_tipo} | Pagina {doc.page}")
+                            testo_pie = f"Cantiere: {s_cantiere}  |  Tipologia: {s_tipo}  |  Pagina {doc.page}"
+                            canvas.drawString(30, 20, testo_pie)
                             canvas.restoreState()
 
                         data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Importo (€)"]]
@@ -1165,22 +1171,98 @@ def page_stampe():
                             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
                             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
                             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                            ('FONTSIZE', (0, 0), (-1, 0), 8),
+                            ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#F4F6F7")),
                             ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#BDC3C7")),
+                            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
                         ]))
                         elements.append(t)
                         
+                        # --- PAGINA 2: MATRICE DI RIEPILOGO ---
+                        elements.append(PageBreak())
+                        
+                        elements.append(Paragraph("<b>Riepilogo Costi per Categoria</b>", styles['Heading2']))
+                        elements.append(Spacer(1, 12))
+                        
+                        def somma_se_contiene(df, parole):
+                            mask = df['Tipo'].apply(lambda x: any(p in x.lower().replace('.', '') for p in parole))
+                            return df[mask]['Importo'].sum()
+
+                        tot_operai = df_rep[df_rep['Tipo'] == 'Operai']['Importo'].sum()
+                        tot_materiali = df_rep[df_rep['Tipo'] == 'Materiale']['Importo'].sum()
+                        tot_inps = somma_se_contiene(df_rep, ['inps'])
+                        tot_inail = somma_se_contiene(df_rep, ['inail'])
+                        tot_cassa = somma_se_contiene(df_rep, ['cassa'])
+                        tot_tutti_amm = df_rep[~df_rep['Tipo'].isin(['Operai', 'Materiale'])]['Importo'].sum()
+                        tot_altri_amm = tot_tutti_amm - (tot_inps + tot_inail + tot_cassa)
+
+                        matrix_data = [
+                            [
+                                "", 
+                                Paragraph("<b>Costi Manodopera<br/>Diretti</b>", style_cell), 
+                                Paragraph("<b>Costi Manodopera<br/>Indiretti</b>", style_cell), 
+                                Paragraph("<b>Materiali</b>", style_cell), 
+                                Paragraph("<b>Altri Amministrativi</b>", style_cell)
+                            ]
+                        ]
+                        
+                        matrix_data.append(["Operai", f"€ {tot_operai:,.2f}", "", "", ""])
+                        matrix_data.append(["INPS", "", f"€ {tot_inps:,.2f}", "", ""])
+                        matrix_data.append(["INAIL", "", f"€ {tot_inail:,.2f}", "", ""])
+                        matrix_data.append(["Cassa Edile", "", f"€ {tot_cassa:,.2f}", "", ""])
+                        matrix_data.append(["Materiali", "", "", f"€ {tot_materiali:,.2f}", ""])
+                        
+                        categorie_rimanenti = [c for c in lista_categorie if not any(p in c.lower().replace('.', '') for p in ['inps', 'inail', 'cassa'])]
+                        for cat in categorie_rimanenti:
+                            val_cat = somma_se_contiene(df_rep, [cat.lower().replace('.', '')])
+                            if val_cat > 0:
+                                matrix_data.append([cat, "", "", "", f"€ {val_cat:,.2f}"])
+                        
+                        tot_mdo_diretti = tot_operai
+                        tot_mdo_indiretti = tot_inps + tot_inail + tot_cassa
+                        matrix_data.append(["Totali", f"€ {tot_mdo_diretti:,.2f}", f"€ {tot_mdo_indiretti:,.2f}", f"€ {tot_materiali:,.2f}", f"€ {tot_altri_amm:,.2f}"])
+                        
+                        matrix_data.append(["Totale Generale", f"€ {tot_report:,.2f}", "", "", ""])
+
+                        t_matrix = Table(matrix_data, colWidths=[120, 130, 130, 90, 110])
+                        style_matrix = [
+                            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#BDC3C7")),
+                            ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+                            ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                            ('VALIGN', (0, 0), (-1, 0), 'MIDDLE'),
+                            ('ALIGN', (0, 1), (0, -1), 'LEFT'),
+                            ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
+                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                            ('FONTNAME', (0, -2), (-1, -2), 'Helvetica-Bold'),
+                            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                            ('BACKGROUND', (0, -2), (-1, -2), colors.HexColor("#ECF0F1")),
+                            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor("#F4F6F7")),
+                            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                            ('TOPPADDING', (0, 0), (-1, -1), 6),
+                            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                        ]
+                        
+                        for i in range(1, len(matrix_data)):
+                            style_matrix.append(('BACKGROUND', (0, i), (0, i), colors.HexColor("#E8F4F8")))
+
+                        t_matrix.setStyle(TableStyle(style_matrix))
+                        elements.append(t_matrix)
+                        
                         doc.build(elements, onFirstPage=intestazione_pagina, onLaterPages=intestazione_pagina)
-                        st.success(f"PDF generato!")
+                        st.success(f"PDF generato con successo!")
+                        
                         with open(filename, "rb") as f:
                             st.download_button("⬇️ Scarica il PDF Cantiere", data=f, file_name=filename, mime="application/pdf", key="dl_pdf_cantiere")
-                except Exception as e:
-                    st.error(f"Errore: {e}")
 
-    # --- TAB 2: REPORT COSTI PER OPERAIO (NUOVA LOGICA) ---
+                except Exception as e:
+                    st.error(f"Errore generazione report: {e}")
+
+    # --- TAB 2: REPORT COSTI PER OPERAIO ---
     with tab2:
         st.subheader("Genera Report Costi per Operaio")
-        st.write("Il report mostra il dettaglio per ogni singolo operaio.")
+        st.write("Questo report mostra il dettaglio delle ore e del costo totale per ogni singolo operaio nel periodo selezionato.")
         
         with st.container():
             col_o1, col_o2 = st.columns(2)
@@ -1192,21 +1274,18 @@ def page_stampe():
                     res_man = supabase.table("costo_manodopera").select("*").gte("data", str(o_data_ini)).lte("data", str(o_data_fin)).execute()
                     
                     if not res_man.data:
-                        st.warning("Nessun costo operaio trovato nel periodo.")
+                        st.warning("Nessun costo operaio trovato nel periodo selezionato.")
                     else:
-                        # 1. Creiamo un DataFrame
                         df_man = pd.DataFrame(res_man.data)
+                        df_man['CantiereNome'] = df_man['cantiere_id'].apply(lambda x: cant_map.get(x, x))
                         
-                        # 2. Mappiamo i nomi dei cantieri
-                        df_man['Cantiere'] = df_man['cantiere_id'].apply(lambda x: cant_map.get(x, x))
+                        df_raggruppato = df_man.groupby(['operaio', 'CantiereNome']).agg(
+                            Ore_Totali=('ore', 'sum'),
+                            Costo_Totale=('totale', 'sum')
+                        ).reset_index()
                         
-                        # 3. Usiamo Pandas per raggruppare e sommare
-                        df_grouped = df_man.groupby(['operaio', 'Cantiere']).agg(
-                            Ore=('ore', 'sum'),
-                            Costo=('totale', 'sum')
-                        ).reset_index().sort_values(by=['operaio', 'Cantiere'])
-
-                        # 4. Prepariamo i dati per il PDF
+                        df_raggruppato = df_raggruppato.sort_values(by=['operaio', 'CantiereNome'])
+                        
                         filename = f"Riepilogo_Operai_{datetime.date.today()}.pdf"
                         doc = SimpleDocTemplate(filename, pagesize=landscape(A4))
                         elements = []
@@ -1218,60 +1297,73 @@ def page_stampe():
                             canvas.saveState()
                             canvas.setFont('Helvetica', 8)
                             canvas.setFillColor(colors.grey)
-                            canvas.drawString(30, 20, f"Riepilogo Operai dal {formatta_data_italiana(o_data_ini)} al {formatta_data_italiana(o_data_fin)} | Pagina {doc.page}")
+                            testo_pie = f"Riepilogo Costi Operai dal {formatta_data_italiana(o_data_ini)} al {formatta_data_italiana(o_data_fin)}  |  Pagina {doc.page}"
+                            canvas.drawString(30, 20, testo_pie)
                             canvas.restoreState()
 
-                        elements.append(Paragraph(f"Riepilogo Costi per Operaio", styles['Title']))
+                        elements.append(Paragraph(f"Riepilogo Costi per Operaio: dal {formatta_data_italiana(o_data_ini)} al {formatta_data_italiana(o_data_fin)}", styles['Title']))
                         elements.append(Spacer(1, 12))
                         
-                        data_rows = [["Operaio", "Cantiere", "Ore Lavorate", "Costo (€)"]]
-                        grand_total_ore = 0.0
-                        grand_total_costo = 0.0
+                        operaio_corrente = None
+                        totale_generale_ore = 0.0
+                        totale_generale_costo = 0.0
+                        subtotale_ore = 0.0
+                        subtotale_costo = 0.0
                         
-                        # 5. Iteriamo sui gruppi in modo sicuro
-                        operai_unici = df_grouped['operaio'].unique()
+                        data_rows = [["Operaio", "Cantiere", "Ore Lavorate", "Costo Totale (€)"]]
                         
-                        for operaio in operai_unici:
-                            df_operaio = df_grouped[df_grouped['operaio'] == operaio]
-                            subtotale_ore = 0.0
-                            subtotale_costo = 0.0
+                        for _, r in df_raggruppato.iterrows():
+                            if operaio_corrente is not None and r['operaio'] != operaio_corrente:
+                                data_rows.append([f"TOTALE {operaio_corrente.upper()}", "", f"{subtotale_ore:.1f}", f"{subtotale_costo:,.2f}"])
+                                data_rows.append(["", "", "", ""])
+                                subtotale_ore = 0.0
+                                subtotale_costo = 0.0
                             
-                            # Aggiungi le righe del singolo operaio
-                            for _, row in df_operaio.iterrows():
-                                subtotale_ore += float(row['Ore'])
-                                subtotale_costo += float(row['Costo'])
-                                data_rows.append([
-                                    Paragraph(str(row['operaio']), style_cell),
-                                    Paragraph(str(row['Cantiere']), style_cell),
-                                    Paragraph(f"{row['Ore']:,.1f}", style_num),
-                                    Paragraph(f"{row['Costo']:,.2f}", style_num)
-                                ])
+                            if r['operaio'] != operaio_corrente:
+                                operaio_corrente = r['operaio']
                             
-                            # Aggiungi il subtotale per questo operaio
-                            data_rows.append([Paragraph(f"<b>TOTALE {str(operaio).upper()}</b>", style_cell), "", Paragraph(f"<b>{subtotale_ore:,.1f}</b>", style_num), Paragraph(f"<b>{subtotale_costo:,.2f}</b>", style_num)])
-                            data_rows.append(["", "", "", ""]) # Riga vuota separatrice
+                            subtotale_ore += float(r['Ore_Totali'])
+                            subtotale_costo += float(r['Costo_Totale'])
+                            totale_generale_ore += float(r['Ore_Totali'])
+                            totale_generale_costo += float(r['Costo_Totale'])
                             
-                            grand_total_ore += subtotale_ore
-                            grand_total_costo += subtotale_costo
-
-                        # Aggiungi il Totale Generale Assoluto
-                        data_rows.append([Paragraph("<b>TOTALE GENERALE ASSOLUTO</b>", style_cell), "", Paragraph(f"<b>{grand_total_ore:,.1f}</b>", style_num), Paragraph(f"<b>{grand_total_costo:,.2f}</b>", style_num)])
+                            data_rows.append([
+                                Paragraph(str(r['operaio']), style_cell),
+                                Paragraph(str(r['CantiereNome']), style_cell),
+                                Paragraph(f"{r['Ore_Totali']:,.1f}", style_num),
+                                Paragraph(f"{r['Costo_Totale']:,.2f}", style_num)
+                            ])
                         
-                        # 6. Creazione della tabella
+                        if operaio_corrente is not None:
+                            data_rows.append([f"TOTALE {operaio_corrente.upper()}", "", f"{subtotale_ore:.1f}", f"{subtotale_costo:,.2f}"])
+                            data_rows.append(["", "", "", ""])
+                        
+                        data_rows.append(["TOTALE GENERALE ASSOLUTO", "", f"{totale_generale_ore:.1f}", f"{totale_generale_costo:,.2f}"])
+                        
                         t = Table(data_rows, colWidths=[160, 200, 100, 120], repeatRows=1)
-                        t.setStyle(TableStyle([
+                        style_cmds = [
                             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
                             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
                             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                            ('FONTSIZE', (0, 0), (-1, 0), 9),
                             ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#BDC3C7")),
-                            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor("#D5F4E6")), # Evidenzia l'ultima riga (Totale Assoluto)
-                        ]))
+                        ]
+                        for i, row in enumerate(data_rows):
+                            if str(row[0]).startswith("TOTALE") and row[0] != "TOTALE GENERALE ASSOLUTO":
+                                style_cmds.append(('BACKGROUND', (0, i), (-1, i), colors.HexColor("#EAECEE")))
+                                style_cmds.append(('FONTNAME', (0, i), (-1, i), 'Helvetica-Bold'))
+                            elif row[0] == "TOTALE GENERALE ASSOLUTO":
+                                style_cmds.append(('BACKGROUND', (0, i), (-1, i), colors.HexColor("#D5F4E6")))
+                                style_cmds.append(('FONTNAME', (0, i), (-1, i), 'Helvetica-Bold'))
+
+                        t.setStyle(TableStyle(style_cmds))
                         elements.append(t)
                         
                         doc.build(elements, onFirstPage=intestazione_pagina_operaio, onLaterPages=intestazione_pagina_operaio)
                         st.success(f"PDF generato con successo!")
+                        
                         with open(filename, "rb") as f:
                             st.download_button("⬇️ Scarica il PDF Operai", data=f, file_name=filename, mime="application/pdf", key="dl_pdf_operai")
 
