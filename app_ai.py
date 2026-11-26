@@ -397,6 +397,7 @@ def page_pagamenti():
     st.write("Registra i pagamenti effettuati per tenere traccia della liquidità (distinta dai costi).")
     
     try:
+        df_cantieri = get_cantieri()
         df_operai = get_operai()
         df_fornitori = get_fornitori()
         res_cat = supabase.table("categorie_amministrative").select("nome").execute()
@@ -404,6 +405,8 @@ def page_pagamenti():
     except:
         st.error("Errore nel caricamento delle anagrafiche.")
         return
+
+    opzioni_cantieri = [("Nessuno", 0)] + [(row['indirizzo'], row['id']) for _, row in df_cantieri.iterrows()]
 
     tab1, tab2, tab3 = st.tabs(["👷 Pagamenti Operai", "🏢 Pagamenti Fornitori", "📑 Pagamenti Amministrativi"])
 
@@ -432,63 +435,103 @@ def page_pagamenti():
         
         st.divider()
         st.subheader("Elenco Pagamenti Operai")
+        col_f1, col_f2 = st.columns(2)
+        data_ini_p = col_f1.date_input("Dal", value=datetime.date.today().replace(day=1), format="DD/MM/YYYY", key="f_ini_op")
+        data_fin_p = col_f2.date_input("Al", value=datetime.date.today(), format="DD/MM/YYYY", key="f_fin_op")
+
         try:
-            res = supabase.table("pagamenti").select("*").eq("tipo", "Operaio").execute()
+            res = supabase.table("pagamenti").select("*").eq("tipo", "Operaio").gte("data", str(data_ini_p)).lte("data", str(data_fin_p)).execute()
             df_pag = pd.DataFrame(res.data)
             if not df_pag.empty:
-                df_pag['data'] = df_pag['data'].apply(formatta_data_italiana)
-                st.dataframe(df_pag[['id', 'data', 'riferimento', 'importo', 'descrizione']], use_container_width=True)
-                st.markdown(f"**Totale Pagato Operai:** € {df_pag['importo'].sum():,.2f}")
+                df_pag['data_it'] = df_pag['data'].apply(formatta_data_italiana)
+                st.dataframe(df_pag[['id', 'data_it', 'riferimento', 'importo', 'descrizione']].rename(columns={'data_it': 'Data', 'riferimento': 'Operaio', 'importo': 'Importo (€)', 'descrizione': 'Descrizione'}), use_container_width=True)
+                st.markdown(f"**Totale Pagato Operai nel periodo:** € {df_pag['importo'].sum():,.2f}")
                 
-                # Elimina
+                st.divider()
                 pag_sel = st.selectbox("Seleziona ID Pagamento da eliminare", df_pag['id'].tolist(), key="del_pag_op")
-                if st.button("Elimina Pagamento Selezionato", type="primary", key="btn_del_pag_op"):
+                if st.button("Elimina Pagamento Selezionato", key="btn_del_pag_op"):
                     supabase.table("pagamenti").delete().eq("id", pag_sel).execute()
                     st.success("Pagamento eliminato!"); st.rerun()
             else:
-                st.info("Nessun pagamento registrato per gli operai.")
+                st.info("Nessun pagamento registrato per gli operai nel periodo selezionato.")
         except Exception as e:
             st.error(f"Errore: {e}")
 
     # --- TAB 2: PAGAMENTI FORNITORI ---
     with tab2:
-        with st.expander("➕ Registra Pagamento a Fornitore"):
-            with st.form("form_pag_fornitore", clear_on_submit=True):
-                col1, col2 = st.columns(2)
-                data_p = col1.date_input("Data", datetime.date.today(), format="DD/MM/YYYY", key="p_data_forn")
-                fornitore_sel = col2.selectbox("Fornitore", df_fornitori['nome'].tolist() if not df_fornitori.empty else [], key="p_forn_sel")
-                
-                col3, col4 = st.columns(2)
-                importo = col3.number_input("Importo (€)", min_value=0.0, step=10.0, key="p_imp_forn")
-                descrizione = col4.text_input("Descrizione / Metodo", key="p_desc_forn")
-                
-                if st.form_submit_button("Salva Pagamento"):
-                    if fornitore_sel and importo > 0:
-                        data_str = data_p.strftime('%Y-%m-%d')
-                        supabase.table("pagamenti").insert({
-                            "data": data_str, "tipo": "Fornitore", "riferimento": fornitore_sel, 
-                            "importo": importo, "descrizione": descrizione
-                        }).execute()
-                        st.success("Pagamento registrato!"); st.rerun()
-                    else:
-                        st.error("Seleziona un fornitore e un importo valido.")
+        st.subheader("Registra Pagamento a Fornitore")
+        
+        # Selezione Fornitore e Cantiere per calcolare i debiti
+        col_sel1, col_sel2 = st.columns(2)
+        fornitore_sel = col_sel1.selectbox("Fornitore", df_fornitori['nome'].tolist() if not df_fornitori.empty else [], key="p_forn_sel_pre")
+        cantiere_sel = col_sel2.selectbox("Cantiere di riferimento (opzionale)", opzioni_cantieri, format_func=lambda x: x[0], key="p_cant_sel_pre")
+
+        if fornitore_sel:
+            cantiere_id = cantiere_sel[1] if cantiere_sel[1] != 0 else None
+            
+            # Calcolo costi totali (fatture)
+            query_costi = supabase.table("costo_materiali").select("totale").eq("fornitore", fornitore_sel)
+            if cantiere_id: query_costi = query_costi.eq("cantiere_id", cantiere_id)
+            res_costi = query_costi.execute()
+            tot_costi = sum(float(r['totale']) for r in res_costi.data) if res_costi.data else 0.0
+            
+            # Calcolo totale pagato
+            query_pag = supabase.table("pagamenti").select("importo").eq("tipo", "Fornitore").eq("riferimento", fornitore_sel)
+            if cantiere_id: query_pag = query_pag.eq("cantiere_id", cantiere_id)
+            res_pag = query_pag.execute()
+            tot_pagato = sum(float(r['importo']) for r in res_pag.data) if res_pag.data else 0.0
+            
+            saldo = tot_costi - tot_pagato
+            
+            st.info(f"**Situazione contabile:** Costi totali registrati (fatture): **€ {tot_costi:,.2f}** | Già pagato: **€ {tot_pagato:,.2f}** | **Saldo da pagare: € {saldo:,.2f}**")
+
+        with st.form("form_pag_fornitore", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            data_p = col1.date_input("Data Pagamento", datetime.date.today(), format="DD/MM/YYYY", key="p_data_forn")
+            # Il fornitore è già scelto sopra, lo mostriamo solo
+            st.write(f"Stai pagando: **{fornitore_sel}**")
+            
+            col3, col4 = st.columns(2)
+            importo = col3.number_input("Importo (€)", min_value=0.0, step=10.0, key="p_imp_forn")
+            descrizione = col4.text_input("Descrizione / Metodo", key="p_desc_forn")
+            
+            if st.form_submit_button("Salva Pagamento"):
+                if fornitore_sel and importo > 0:
+                    data_str = data_p.strftime('%Y-%m-%d')
+                    dati_pag = {
+                        "data": data_str, "tipo": "Fornitore", "riferimento": fornitore_sel, 
+                        "importo": importo, "descrizione": descrizione
+                    }
+                    if cantiere_id: dati_pag["cantiere_id"] = cantiere_id
+                    
+                    supabase.table("pagamenti").insert(dati_pag).execute()
+                    st.success("Pagamento registrato!"); st.rerun()
+                else:
+                    st.error("Seleziona un fornitore e un importo valido.")
         
         st.divider()
         st.subheader("Elenco Pagamenti Fornitori")
+        col_f1, col_f2 = st.columns(2)
+        data_ini_p = col_f1.date_input("Dal", value=datetime.date.today().replace(day=1), format="DD/MM/YYYY", key="f_ini_forn")
+        data_fin_p = col_f2.date_input("Al", value=datetime.date.today(), format="DD/MM/YYYY", key="f_fin_forn")
+
         try:
-            res = supabase.table("pagamenti").select("*").eq("tipo", "Fornitore").execute()
+            res = supabase.table("pagamenti").select("*").eq("tipo", "Fornitore").gte("data", str(data_ini_p)).lte("data", str(data_fin_p)).execute()
             df_pag = pd.DataFrame(res.data)
             if not df_pag.empty:
-                df_pag['data'] = df_pag['data'].apply(formatta_data_italiana)
-                st.dataframe(df_pag[['id', 'data', 'riferimento', 'importo', 'descrizione']], use_container_width=True)
-                st.markdown(f"**Totale Pagato Fornitori:** € {df_pag['importo'].sum():,.2f}")
+                df_pag['data_it'] = df_pag['data'].apply(formatta_data_italiana)
+                df_pag['cantiere_nome'] = df_pag['cantiere_id'].apply(lambda x: dict(opzioni_cantieri).get(x, "N/D") if pd.notnull(x) else "Generale")
                 
+                st.dataframe(df_pag[['id', 'data_it', 'riferimento', 'cantiere_nome', 'importo', 'descrizione']].rename(columns={'data_it': 'Data', 'riferimento': 'Fornitore', 'cantiere_nome': 'Cantiere', 'importo': 'Importo (€)', 'descrizione': 'Descrizione'}), use_container_width=True)
+                st.markdown(f"**Totale Pagato Fornitori nel periodo:** € {df_pag['importo'].sum():,.2f}")
+                
+                st.divider()
                 pag_sel = st.selectbox("Seleziona ID Pagamento da eliminare", df_pag['id'].tolist(), key="del_pag_forn")
-                if st.button("Elimina Pagamento Selezionato", type="primary", key="btn_del_pag_forn"):
+                if st.button("Elimina Pagamento Selezionato", key="btn_del_pag_forn"):
                     supabase.table("pagamenti").delete().eq("id", pag_sel).execute()
                     st.success("Pagamento eliminato!"); st.rerun()
             else:
-                st.info("Nessun pagamento registrato per i fornitori.")
+                st.info("Nessun pagamento registrato per i fornitori nel periodo selezionato.")
         except Exception as e:
             st.error(f"Errore: {e}")
 
@@ -517,20 +560,25 @@ def page_pagamenti():
         
         st.divider()
         st.subheader("Elenco Pagamenti Amministrativi")
+        col_f1, col_f2 = st.columns(2)
+        data_ini_p = col_f1.date_input("Dal", value=datetime.date.today().replace(day=1), format="DD/MM/YYYY", key="f_ini_amm")
+        data_fin_p = col_f2.date_input("Al", value=datetime.date.today(), format="DD/MM/YYYY", key="f_fin_amm")
+
         try:
-            res = supabase.table("pagamenti").select("*").eq("tipo", "Amministrativo").execute()
+            res = supabase.table("pagamenti").select("*").eq("tipo", "Amministrativo").gte("data", str(data_ini_p)).lte("data", str(data_fin_p)).execute()
             df_pag = pd.DataFrame(res.data)
             if not df_pag.empty:
-                df_pag['data'] = df_pag['data'].apply(formatta_data_italiana)
-                st.dataframe(df_pag[['id', 'data', 'riferimento', 'importo', 'descrizione']], use_container_width=True)
-                st.markdown(f"**Totale Pagato Amministrativi:** € {df_pag['importo'].sum():,.2f}")
+                df_pag['data_it'] = df_pag['data'].apply(formatta_data_italiana)
+                st.dataframe(df_pag[['id', 'data_it', 'riferimento', 'importo', 'descrizione']].rename(columns={'data_it': 'Data', 'riferimento': 'Categoria', 'importo': 'Importo (€)', 'descrizione': 'Descrizione'}), use_container_width=True)
+                st.markdown(f"**Totale Pagato Amministrativi nel periodo:** € {df_pag['importo'].sum():,.2f}")
                 
+                st.divider()
                 pag_sel = st.selectbox("Seleziona ID Pagamento da eliminare", df_pag['id'].tolist(), key="del_pag_amm")
-                if st.button("Elimina Pagamento Selezionato", type="primary", key="btn_del_pag_amm"):
+                if st.button("Elimina Pagamento Selezionato", key="btn_del_pag_amm"):
                     supabase.table("pagamenti").delete().eq("id", pag_sel).execute()
                     st.success("Pagamento eliminato!"); st.rerun()
             else:
-                st.info("Nessun pagamento amministrativo registrato.")
+                st.info("Nessun pagamento amministrativo registrato nel periodo selezionato.")
         except Exception as e:
             st.error(f"Errore: {e}")
 
