@@ -412,33 +412,80 @@ def page_pagamenti():
 
     # --- TAB 1: PAGAMENTI OPERAI ---
     with tab1:
-        with st.expander("➕ Registra Pagamento a Operaio"):
-            with st.form("form_pag_operaio", clear_on_submit=True):
-                col1, col2 = st.columns(2)
-                data_p = col1.date_input("Data", datetime.date.today(), format="DD/MM/YYYY", key="p_data_op")
-                operaio_sel = col2.selectbox("Operaio", df_operai['nome'].tolist() if not df_operai.empty else [], key="p_op_sel")
+        st.subheader("Registra Pagamento a Operaio")
+        
+        # Selezione Operaio e Cantiere per calcolare i debiti
+        col_sel1, col_sel2 = st.columns(2)
+        operaio_sel = col_sel1.selectbox("Operaio", df_operai['nome'].tolist() if not df_operai.empty else [], key="p_op_sel_pre")
+        cantiere_op_sel = col_sel2.selectbox("Cantiere di riferimento (opzionale)", opzioni_cantieri, format_func=lambda x: x[0], key="p_cant_op_sel_pre")
+
+        if operaio_sel:
+            cantiere_op_id = cantiere_op_sel[1] if cantiere_op_sel[1] != 0 else None
+            
+            # --- NUOVO BLOCCO: Estratto Conto Operai a scalare ---
+            query_costi = supabase.table("costo_manodopera").select("*").eq("operaio", operaio_sel)
+            if cantiere_op_id: query_costi = query_costi.eq("cantiere_id", cantiere_op_id)
+            res_costi = query_costi.execute()
+            
+            query_pag = supabase.table("pagamenti").select("importo").eq("tipo", "Operaio").eq("riferimento", operaio_sel)
+            if cantiere_op_id: query_pag = query_pag.eq("cantiere_id", cantiere_op_id)
+            res_pag = query_pag.execute()
+            tot_pagato_op = sum(float(r['importo']) for r in res_pag.data) if res_pag.data else 0.0
+
+            if res_costi.data:
+                df_costi = pd.DataFrame(res_costi.data).sort_values(by="data")
+                tot_costi_op = df_costi['totale'].sum()
+                saldo_op = tot_costi_op - tot_pagato_op
                 
-                col_cant, col_dummy = st.columns(2)
-                cantiere_op_sel = col_cant.selectbox("Cantiere di riferimento (opzionale)", opzioni_cantieri, format_func=lambda x: x[0], key="p_cant_op_sel")
+                st.info(f"**Situazione:** Maturato: **€ {tot_costi_op:,.2f}** | Già pagato: **€ {tot_pagato_op:,.2f}** | **Saldo da pagare: € {saldo_op:,.2f}**")
                 
-                col3, col4 = st.columns(2)
-                importo = col3.number_input("Importo (€)", min_value=0.0, step=10.0, key="p_imp_op")
-                descrizione = col4.text_input("Descrizione / Metodo (es. Bonifico, Contanti)", key="p_desc_op")
-                
-                if st.form_submit_button("Salva Pagamento"):
-                    if operaio_sel and importo > 0:
-                        data_str = data_p.strftime('%Y-%m-%d')
-                        dati_pag = {
-                            "data": data_str, "tipo": "Operaio", "riferimento": operaio_sel, 
-                            "importo": importo, "descrizione": descrizione
-                        }
-                        if cantiere_op_sel[1] != 0:
-                            dati_pag["cantiere_id"] = cantiere_op_sel[1]
-                            
-                        supabase.table("pagamenti").insert(dati_pag).execute()
-                        st.success("Pagamento registrato!"); st.rerun()
+                # Logica a scalare
+                pagato_residuo = tot_pagato_op
+                stati = []
+                for index, row in df_costi.iterrows():
+                    importo_costo = float(row['totale'])
+                    if pagato_residuo >= importo_costo:
+                        stati.append("✅ Pagato")
+                        pagato_residuo -= importo_costo
+                    elif pagato_residuo > 0:
+                        stati.append(f"⚠️ Parziale (Residuo: € {importo_costo - pagato_residuo:,.2f})")
+                        pagato_residuo = 0
                     else:
-                        st.error("Seleziona un operaio e un importo valido.")
+                        stati.append("❌ Da Pagare")
+                
+                df_costi['Stato'] = stati
+                df_costi['Data'] = df_costi['data'].apply(formatta_data_italiana)
+                
+                with st.expander("🔍 Dettaglio Competenze (Ore Lavorate) per questo Operaio/Cantiere", expanded=True):
+                    st.dataframe(df_costi[['Data', 'ore', 'descrizione', 'Stato']].rename(columns={
+                        'ore': 'Ore Lavorate', 'descrizione': 'Descrizione Lavori'
+                    }), use_container_width=True)
+            else:
+                st.info("Nessun costo registrato per questo operaio/cantiere.")
+            # --- FINE NUOVO BLOCCO ---
+
+        with st.form("form_pag_operaio", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            data_p = col1.date_input("Data Pagamento", datetime.date.today(), format="DD/MM/YYYY", key="p_data_op")
+            st.write(f"Stai pagando: **{operaio_sel}**")
+            
+            col3, col4 = st.columns(2)
+            importo = col3.number_input("Importo (€)", min_value=0.0, step=10.0, key="p_imp_op")
+            descrizione = col4.text_input("Descrizione / Metodo (es. Bonifico, Contanti)", key="p_desc_op")
+            
+            if st.form_submit_button("Salva Pagamento"):
+                if operaio_sel and importo > 0:
+                    data_str = data_p.strftime('%Y-%m-%d')
+                    dati_pag = {
+                        "data": data_str, "tipo": "Operaio", "riferimento": operaio_sel, 
+                        "importo": importo, "descrizione": descrizione
+                    }
+                    if cantiere_op_id: dati_pag["cantiere_id"] = cantiere_op_id
+                    
+                    supabase.table("pagamenti").insert(dati_pag).execute()
+                    st.success("Pagamento registrato!"); st.rerun()
+                else:
+                    st.error("Seleziona un operaio e un importo valido.")
         
         st.divider()
         st.subheader("Elenco Pagamenti Operai")
