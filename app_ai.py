@@ -1233,7 +1233,7 @@ def page_stampe():
     torna_alla_home()
     st.title("🖨️ Stampe e Report Personalizzati")
     
-    tab1, tab2 = st.tabs(["📄 Report Costi per Cantiere", "👷 Riepilogo Costi per Operaio"])
+    tab1, tab2, tab3 = st.tabs(["📄 Report Costi per Cantiere", "👷 Riepilogo Costi per Operaio", "💸 Riepilogo Pagamenti"])
     
     try:
         df_cantieri = get_cantieri()
@@ -1352,7 +1352,6 @@ def page_stampe():
                         ]))
                         elements.append(t)
                         
-                        # --- PAGINA 2: MATRICE DI RIEPILOGO ---
                         elements.append(PageBreak())
                         
                         elements.append(Paragraph("<b>Riepilogo Costi per Categoria</b>", styles['Heading2']))
@@ -1370,16 +1369,7 @@ def page_stampe():
                         tot_tutti_amm = df_rep[~df_rep['Tipo'].isin(['Operai', 'Materiale'])]['Importo'].sum()
                         tot_altri_amm = tot_tutti_amm - (tot_inps + tot_inail + tot_cassa)
 
-                        matrix_data = [
-                            [
-                                "", 
-                                Paragraph("<b>Costi Manodopera<br/>Diretti</b>", style_cell), 
-                                Paragraph("<b>Costi Manodopera<br/>Indiretti</b>", style_cell), 
-                                Paragraph("<b>Materiali</b>", style_cell), 
-                                Paragraph("<b>Altri Amministrativi</b>", style_cell)
-                            ]
-                        ]
-                        
+                        matrix_data = [["", Paragraph("<b>Costi Manodopera<br/>Diretti</b>", style_cell), Paragraph("<b>Costi Manodopera<br/>Indiretti</b>", style_cell), Paragraph("<b>Materiali</b>", style_cell), Paragraph("<b>Altri Amministrativi</b>", style_cell)]]
                         matrix_data.append(["Operai", f"€ {tot_operai:,.2f}", "", "", ""])
                         matrix_data.append(["INPS", "", f"€ {tot_inps:,.2f}", "", ""])
                         matrix_data.append(["INAIL", "", f"€ {tot_inail:,.2f}", "", ""])
@@ -1392,33 +1382,12 @@ def page_stampe():
                             if val_cat > 0:
                                 matrix_data.append([cat, "", "", "", f"€ {val_cat:,.2f}"])
                         
-                        tot_mdo_diretti = tot_operai
-                        tot_mdo_indiretti = tot_inps + tot_inail + tot_cassa
-                        matrix_data.append(["Totali", f"€ {tot_mdo_diretti:,.2f}", f"€ {tot_mdo_indiretti:,.2f}", f"€ {tot_materiali:,.2f}", f"€ {tot_altri_amm:,.2f}"])
-                        
+                        matrix_data.append(["Totali", f"€ {tot_operai:,.2f}", f"€ {tot_inps + tot_inail + tot_cassa:,.2f}", f"€ {tot_materiali:,.2f}", f"€ {tot_altri_amm:,.2f}"])
                         matrix_data.append(["Totale Generale", f"€ {tot_report:,.2f}", "", "", ""])
 
                         t_matrix = Table(matrix_data, colWidths=[120, 130, 130, 90, 110])
-                        style_matrix = [
-                            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#BDC3C7")),
-                            ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
-                            ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
-                            ('VALIGN', (0, 0), (-1, 0), 'MIDDLE'),
-                            ('ALIGN', (0, 1), (0, -1), 'LEFT'),
-                            ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
-                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                            ('FONTNAME', (0, -2), (-1, -2), 'Helvetica-Bold'),
-                            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
-                            ('BACKGROUND', (0, -2), (-1, -2), colors.HexColor("#ECF0F1")),
-                            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor("#F4F6F7")),
-                            ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                            ('TOPPADDING', (0, 0), (-1, -1), 6),
-                            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-                        ]
-                        
-                        for i in range(1, len(matrix_data)):
-                            style_matrix.append(('BACKGROUND', (0, i), (0, i), colors.HexColor("#E8F4F8")))
-
+                        style_matrix = [('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#BDC3C7")), ('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('ALIGN', (0, 1), (0, -1), 'LEFT'), ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'), ('FONTNAME', (0, -2), (-1, -1), 'Helvetica-Bold'), ('BACKGROUND', (0, -2), (-1, -2), colors.HexColor("#ECF0F1")), ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor("#F4F6F7")), ('GRID', (0, 0), (-1, -1), 1, colors.black), ('TOPPADDING', (0, 0), (-1, -1), 6), ('BOTTOMPADDING', (0, 0), (-1, -1), 6)]
+                        for i in range(1, len(matrix_data)): style_matrix.append(('BACKGROUND', (0, i), (0, i), colors.HexColor("#E8F4F8")))
                         t_matrix.setStyle(TableStyle(style_matrix))
                         elements.append(t_matrix)
                         
@@ -1541,6 +1510,113 @@ def page_stampe():
 
                 except Exception as e:
                     st.error(f"Errore generazione report operai: {e}")
+
+    # --- TAB 3: RIEPILOGO PAGAMENTI ---
+    with tab3:
+        st.subheader("Genera Report Pagamenti")
+        st.write("Filtra i pagamenti per periodo, categoria e specifico destinatario.")
+        
+        with st.container():
+            col_p1, col_p2 = st.columns(2)
+            p_data_ini = col_p1.date_input("Periodo Dal", value=datetime.date.today().replace(day=1), format="DD/MM/YYYY", key="p_st_data_ini")
+            p_data_fin = col_p2.date_input("Periodo Al", value=datetime.date.today(), format="DD/MM/YYYY", key="p_st_data_fin")
+            
+            col_p3, col_p4 = st.columns(2)
+            p_tipo = col_p3.selectbox("Categoria Pagamento", ["Tutti", "Operai", "Fornitori", "Amministrativi"], key="p_st_tipo")
+            
+            filtro_specifico = "Tutti"
+            if p_tipo == "Operai":
+                try:
+                    df_op = get_operai()
+                    lista_op = ["Tutti gli operai"] + df_op['nome'].tolist()
+                except: lista_op = ["Tutti gli operai"]
+                filtro_specifico = col_p4.selectbox("Seleziona Operaio", lista_op, key="p_st_sel_op")
+            elif p_tipo == "Fornitori":
+                try:
+                    df_forn = get_fornitori()
+                    lista_forn = ["Tutti i fornitori"] + df_forn['nome'].tolist()
+                except: lista_forn = ["Tutti i fornitori"]
+                filtro_specifico = col_p4.selectbox("Seleziona Fornitore", lista_forn, key="p_st_sel_forn")
+            elif p_tipo == "Amministrativi":
+                try:
+                    res_cat = supabase.table("categorie_amministrative").select("nome").execute()
+                    lista_cat = ["Tutte le categorie"] + [c['nome'] for c in res_cat.data]
+                except: lista_cat = ["Tutte le categorie"]
+                filtro_specifico = col_p4.selectbox("Seleziona Categoria", lista_cat, key="p_st_sel_cat")
+
+            if st.button("💸 Genera PDF Pagamenti", type="primary"):
+                try:
+                    # Mappatura nome UI -> nome DB
+                    tipo_db = "Tutti"
+                    if p_tipo == "Operai": tipo_db = "Operaio"
+                    elif p_tipo == "Fornitori": tipo_db = "Fornitore"
+                    elif p_tipo == "Amministrativi": tipo_db = "Amministrativo"
+                    
+                    query = supabase.table("pagamenti").select("*").gte("data", str(p_data_ini)).lte("data", str(p_data_fin))
+                    if tipo_db != "Tutti":
+                        query = query.eq("tipo", tipo_db)
+                    
+                    res = query.execute()
+                    df_pag = pd.DataFrame(res.data)
+                    
+                    # Filtro per nome specifico (se selezionato)
+                    if not df_pag.empty and filtro_specifico not in ["Tutti", "Tutti gli operai", "Tutti i fornitori", "Tutte le categorie"]:
+                        df_pag = df_pag[df_pag['riferimento'] == filtro_specifico]
+                    
+                    if df_pag.empty:
+                        st.warning("Nessun pagamento trovato per questi filtri.")
+                    else:
+                        df_pag = df_pag.sort_values("data")
+                        filename = f"Report_Pagamenti_{datetime.date.today()}.pdf"
+                        doc = SimpleDocTemplate(filename, pagesize=landscape(A4))
+                        elements = []
+                        styles = getSampleStyleSheet()
+                        style_cell = ParagraphStyle('cell_style', parent=styles['Normal'], fontSize=8, leading=10, alignment=0)
+                        
+                        def intestazione_pagina_pagamenti(canvas, doc):
+                            canvas.saveState()
+                            canvas.setFont('Helvetica', 8)
+                            canvas.setFillColor(colors.grey)
+                            testo_pie = f"Report Pagamenti dal {formatta_data_italiana(p_data_ini)} al {formatta_data_italiana(p_data_fin)} | Filtro: {p_tipo} - {filtro_specifico} | Pagina {doc.page}"
+                            canvas.drawString(30, 20, testo_pie)
+                            canvas.restoreState()
+
+                        elements.append(Paragraph(f"Report Pagamenti: {p_tipo} - {filtro_specifico}", styles['Title']))
+                        elements.append(Spacer(1, 12))
+                        
+                        data_rows = [["Data", "Tipo", "Destinatario", "Descrizione", "Importo (€)"]]
+                        for _, r in df_pag.iterrows():
+                            data_rows.append([
+                                formatta_data_italiana(r['data']),
+                                Paragraph(str(r['tipo']), style_cell),
+                                Paragraph(str(r['riferimento']), style_cell),
+                                Paragraph(str(r['descrizione'] or ""), style_cell),
+                                f"{r['importo']:,.2f}"
+                            ])
+                        
+                        tot_pagato = df_pag['importo'].sum()
+                        data_rows.append(["", "", "", "TOTALE GENERALE", f"{tot_pagato:,.2f}"])
+                        
+                        t = Table(data_rows, colWidths=[70, 80, 150, 250, 80], repeatRows=1)
+                        t.setStyle(TableStyle([
+                            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
+                            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                            ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#F4F6F7")),
+                            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#BDC3C7")),
+                            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                        ]))
+                        elements.append(t)
+                        
+                        doc.build(elements, onFirstPage=intestazione_pagina_pagamenti, onLaterPages=intestazione_pagina_pagamenti)
+                        st.success(f"PDF generato con successo!")
+                        
+                        with open(filename, "rb") as f:
+                            st.download_button("⬇️ Scarica il PDF Pagamenti", data=f, file_name=filename, mime="application/pdf", key="dl_pdf_pagamenti")
+                            
+                except Exception as e:
+                    st.error(f"Errore generazione report pagamenti: {e}")
 
 
 # --- NAVIGAZIONE ---
