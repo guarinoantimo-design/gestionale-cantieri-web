@@ -410,59 +410,45 @@ def page_pagamenti():
 
     tab1, tab2, tab3 = st.tabs(["👷 Pagamenti Operai", "🏢 Pagamenti Fornitori", "📑 Pagamenti Amministrativi"])
 
-    # --- TAB 1: PAGAMENTI OPERAI ---
+    # --- TAB 1: PAGAMENTI OPERAI (CON RIPARTIZIONE AUTOMATICA) ---
     with tab1:
-        st.subheader("Registra Pagamento a Operaio")
+        st.subheader("Registra Pagamento a Operaio (Ripartizione Automatica)")
         
-        # Selezione Operaio e Cantiere per calcolare i debiti
         col_sel1, col_sel2 = st.columns(2)
-        operaio_sel = col_sel1.selectbox("Operaio", df_operai['nome'].tolist() if not df_operai.empty else [], key="p_op_sel_pre")
-        cantiere_op_sel = col_sel2.selectbox("Cantiere di riferimento (opzionale)", opzioni_cantieri, format_func=lambda x: x[0], key="p_cant_op_sel_pre")
-
+        operaio_sel = col_sel1.selectbox("Seleziona Operaio", df_operai['nome'].tolist() if not df_operai.empty else [], key="p_op_sel_pre")
+        
+        # Mostriamo l'anteprima della ripartizione solo se è selezionato un operaio
         if operaio_sel:
-            cantiere_op_id = cantiere_op_sel[1] if cantiere_op_sel[1] != 0 else None
+            # 1. Calcoliamo i costi maturati dall'operaio per ogni cantiere
+            res_costi_op = supabase.table("costo_manodopera").select("cantiere_id, totale").eq("operaio", operaio_sel).execute()
+            df_costi_op = pd.DataFrame(res_costi_op.data)
             
-            # --- NUOVO BLOCCO: Estratto Conto Operai a scalare ---
-            query_costi = supabase.table("costo_manodopera").select("*").eq("operaio", operaio_sel)
-            if cantiere_op_id: query_costi = query_costi.eq("cantiere_id", cantiere_op_id)
-            res_costi = query_costi.execute()
-            
-            query_pag = supabase.table("pagamenti").select("importo").eq("tipo", "Operaio").eq("riferimento", operaio_sel)
-            if cantiere_op_id: query_pag = query_pag.eq("cantiere_id", cantiere_op_id)
-            res_pag = query_pag.execute()
-            tot_pagato_op = sum(float(r['importo']) for r in res_pag.data) if res_pag.data else 0.0
-
-            if res_costi.data:
-                df_costi = pd.DataFrame(res_costi.data).sort_values(by="data")
-                tot_costi_op = df_costi['totale'].sum()
-                saldo_op = tot_costi_op - tot_pagato_op
+            if not df_costi_op.empty:
+                # Sommiamo i totali per cantiere
+                df_raggruppato = df_costi_op.groupby('cantiere_id')['totale'].sum().reset_index()
+                df_raggruppato['CantiereNome'] = df_raggruppato['cantiere_id'].apply(lambda x: dict(opzioni_cantieri).get(x, x))
+                tot_maturato = df_raggruppato['totale'].sum()
                 
-                st.info(f"**Situazione:** Maturato: **€ {tot_costi_op:,.2f}** | Già pagato: **€ {tot_pagato_op:,.2f}** | **Saldo da pagare: € {saldo_op:,.2f}**")
+                # 2. Calcoliamo il già pagato (globale, per sapere il saldo totale)
+                res_pag_op = supabase.table("pagamenti").select("importo").eq("tipo", "Operaio").eq("riferimento", operaio_sel).execute()
+                tot_pagato = sum(float(r['importo']) for r in res_pag_op.data) if res_pag_op.data else 0.0
+                saldo_totale = tot_maturato - tot_pagato
                 
-                # Logica a scalare
-                pagato_residuo = tot_pagato_op
-                stati = []
-                for index, row in df_costi.iterrows():
-                    importo_costo = float(row['totale'])
-                    if pagato_residuo >= importo_costo:
-                        stati.append("✅ Pagato")
-                        pagato_residuo -= importo_costo
-                    elif pagato_residuo > 0:
-                        stati.append(f"⚠️ Parziale (Residuo: € {importo_costo - pagato_residuo:,.2f})")
-                        pagato_residuo = 0
-                    else:
-                        stati.append("❌ Da Pagare")
+                st.info(f"**Situazione complessiva di {operaio_sel}:** Maturato: **€ {tot_maturato:,.2f}** | Già pagato: **€ {tot_pagato:,.2f}** | **Saldo Totale da pagare: € {saldo_totale:,.2f}**")
                 
-                df_costi['Stato'] = stati
-                df_costi['Data'] = df_costi['data'].apply(formatta_data_italiana)
-                
-                with st.expander("🔍 Dettaglio Competenze (Ore Lavorate) per questo Operaio/Cantiere", expanded=True):
-                    st.dataframe(df_costi[['Data', 'ore', 'descrizione', 'Stato']].rename(columns={
-                        'ore': 'Ore Lavorate', 'descrizione': 'Descrizione Lavori'
-                    }), use_container_width=True)
+                if tot_maturato > 0:
+                    # Calcoliamo le percentuali
+                    df_raggruppato['Percentuale'] = (df_raggruppato['totale'] / tot_maturato) * 100
+                    
+                    st.write("Le quote di ripartizione del pagamento saranno basate su questi valori:")
+                    df_mostra = df_raggruppato[['CantiereNome', 'totale', 'Percentuale']].copy()
+                    df_mostra['totale'] = df_mostra['totale'].apply(lambda x: f"€ {x:,.2f}")
+                    df_mostra['Percentuale'] = df_mostra['Percentuale'].apply(lambda x: f"{x:.1f}%")
+                    st.dataframe(df_mostra.rename(columns={'CantiereNome': 'Cantiere', 'totale': 'Costo Maturato', 'Percentuale': 'Quota %'}), use_container_width=True)
             else:
-                st.info("Nessun costo registrato per questo operaio/cantiere.")
-            # --- FINE NUOVO BLOCCO ---
+                st.warning("Questo operaio non ha costi registrati in nessun cantiere.")
+                df_raggruppato = pd.DataFrame()
+                tot_maturato = 0
 
         with st.form("form_pag_operaio", clear_on_submit=True):
             col1, col2 = st.columns(2)
@@ -470,25 +456,54 @@ def page_pagamenti():
             st.write(f"Stai pagando: **{operaio_sel}**")
             
             col3, col4 = st.columns(2)
-            importo = col3.number_input("Importo (€)", min_value=0.0, step=10.0, key="p_imp_op")
-            descrizione = col4.text_input("Descrizione / Metodo (es. Bonifico, Contanti)", key="p_desc_op")
+            importo = col3.number_input("Importo Totale da Pagare (€)", min_value=0.0, step=10.0, key="p_imp_op")
+            descrizione = col4.text_input("Descrizione / Metodo (es. Acconto, Bonifico)", key="p_desc_op")
             
-            if st.form_submit_button("Salva Pagamento"):
+            if st.form_submit_button("Salva Pagamento e Ripartisci"):
                 if operaio_sel and importo > 0:
-                    data_str = data_p.strftime('%Y-%m-%d')
-                    dati_pag = {
-                        "data": data_str, "tipo": "Operaio", "riferimento": operaio_sel, 
-                        "importo": importo, "descrizione": descrizione
-                    }
-                    if cantiere_op_id: dati_pag["cantiere_id"] = cantiere_op_id
-                    
-                    supabase.table("pagamenti").insert(dati_pag).execute()
-                    st.success("Pagamento registrato!"); st.rerun()
+                    if 'df_raggruppato' in locals() and not df_raggruppato.empty:
+                        data_str = data_p.strftime('%Y-%m-%d')
+                        
+                        # Logica di ripartizione
+                        importo_residuo = float(importo)
+                        righe_da_inserire = []
+                        
+                        # Iteriamo sui cantieri in cui ha lavorato
+                        for i, row in df_raggruppato.iterrows():
+                            cid = int(row['cantiere_id'])
+                            quota_percentuale = row['Percentuale'] / 100
+                            
+                            # Se è l'ultimo record, gli diamo il resto per evitare errori di arrotondamento
+                            if i == len(df_raggruppato) - 1:
+                                importo_quota = importo_residuo
+                            else:
+                                importo_quota = round(float(importo) * quota_percentuale, 2)
+                                importo_residuo -= importo_quota
+                            
+                            # Creiamo il record per questo cantiere
+                            if importo_quota > 0:
+                                righe_da_inserire.append({
+                                    "data": data_str, 
+                                    "tipo": "Operaio", 
+                                    "riferimento": operaio_sel, 
+                                    "cantiere_id": cid,
+                                    "importo": importo_quota, 
+                                    "descrizione": f"{descrizione} (Quota Cantiere)" if descrizione else "Quota Cantiere"
+                                })
+                        
+                        # Inseriamo tutti i record in blocco
+                        for riga in righe_da_inserire:
+                            supabase.table("pagamenti").insert(riga).execute()
+                            
+                        st.success(f"Pagamento di € {importo:,.2f} registrato e ripartito su {len(righe_da_inserire)} cantieri!")
+                        st.rerun()
+                    else:
+                        st.error("Impossibile ripartire: l'operaio non ha costi registrati nei cantieri.")
                 else:
-                    st.error("Seleziona un operaio e un importo valido.")
+                    st.error("Seleziona un operaio e inserisci un importo valido.")
         
         st.divider()
-        st.subheader("Elenco Pagamenti Operai")
+        st.subheader("Elenco Pagamenti Operai (con Cantiere)")
         col_f1, col_f2 = st.columns(2)
         data_ini_p = col_f1.date_input("Dal", value=datetime.date.today().replace(day=1), format="DD/MM/YYYY", key="f_ini_op")
         data_fin_p = col_f2.date_input("Al", value=datetime.date.today(), format="DD/MM/YYYY", key="f_fin_op")
@@ -499,6 +514,7 @@ def page_pagamenti():
             if not df_pag.empty:
                 df_pag['data_it'] = df_pag['data'].apply(formatta_data_italiana)
                 df_pag['cantiere_nome'] = df_pag['cantiere_id'].apply(lambda x: dict(opzioni_cantieri).get(x, "N/D") if pd.notnull(x) else "Generale")
+                
                 st.dataframe(df_pag[['id', 'data_it', 'riferimento', 'cantiere_nome', 'importo', 'descrizione']].rename(columns={'data_it': 'Data', 'riferimento': 'Operaio', 'cantiere_nome': 'Cantiere', 'importo': 'Importo (€)', 'descrizione': 'Descrizione'}), use_container_width=True)
                 st.markdown(f"**Totale Pagato Operai nel periodo:** € {df_pag['importo'].sum():,.2f}")
                 
@@ -518,7 +534,7 @@ def page_pagamenti():
         
         col_sel1, col_sel2 = st.columns(2)
         fornitore_sel = col_sel1.selectbox("Fornitore", df_fornitori['nome'].tolist() if not df_fornitori.empty else [], key="p_forn_sel_pre")
-        cantiere_sel = col_sel2.selectbox("Cantiere di riferimento (opzionale)", opzioni_cantieri, format_func=lambda x: x[0], key="p_cant_sel_pre")
+        cantiere_sel = col_sel2.selectbox("Cantiere di riferimento", opzioni_cantieri, format_func=lambda x: x[0], key="p_cant_sel_pre")
 
         if fornitore_sel:
             cantiere_id = cantiere_sel[1] if cantiere_sel[1] != 0 else None
@@ -657,56 +673,6 @@ def page_pagamenti():
                 st.info("Nessun pagamento amministrativo registrato nel periodo selezionato.")
         except Exception as e:
             st.error(f"Errore: {e}")
-
-def page_utenti():
-    torna_alla_home()
-    st.title("👤 Gestione Utenti")
-    with st.expander("➕ Nuovo Utente"):
-        with st.form("nuovo_utente", clear_on_submit=True):
-            col1, col2 = st.columns(2)
-            new_user = col1.text_input("Username")
-            new_pass = col2.text_input("Password", type="password")
-            is_admin_new = st.checkbox("Rendi questo utente Amministratore")
-            if st.form_submit_button("Crea Utente"):
-                if new_user and new_pass:
-                    hashed_pw = hashlib.sha256(new_pass.encode()).hexdigest()
-                    try:
-                        supabase.table("users").insert({"username": new_user, "password_hash": hashed_pw, "is_admin": is_admin_new}).execute()
-                        st.success(f"Utente '{new_user}' creato con successo!")
-                    except: st.error("Questo username esiste già.")
-                else: st.error("Username e Password sono obbligatori.")
-    
-    st.subheader("👥 Utenti Registrati")
-    try:
-        res = supabase.table("users").select("username, is_admin").execute()
-        df_users = pd.DataFrame(res.data)
-    except: df_users = pd.DataFrame()
-    
-    if not df_users.empty:
-        df_users_disp = df_users.copy()
-        df_users_disp['is_admin'] = df_users_disp['is_admin'].apply(lambda x: "Sì" if x else "No")
-        st.dataframe(df_users_disp.rename(columns={'username': 'Username', 'is_admin': 'Amministratore'}), use_container_width=True)
-        
-        st.subheader("Gestisci Utente")
-        user_sel = st.selectbox("Seleziona Utente", df_users['username'].tolist(), key="sel_user_gest")
-        
-        if user_sel == "admin":
-            st.info("L'utente 'admin' è l'amministratore principale e non può essere modificato o eliminato.")
-        else:
-            col1, col2 = st.columns(2)
-            with col1:
-                with st.form("modifica_utente"):
-                    new_password = st.text_input("Nuova Password (lascia vuoto per non cambiare)", type="password")
-                    new_admin_status = st.checkbox("Amministratore")
-                    if st.form_submit_button("Aggiorna Utente"):
-                        update_data = {"is_admin": new_admin_status}
-                        if new_password: update_data["password_hash"] = hashlib.sha256(new_password.encode()).hexdigest()
-                        supabase.table("users").update(update_data).eq("username", user_sel).execute()
-                        st.success("Utente aggiornato!"); st.rerun()
-            with col2:
-                if st.button("Elimina Utente", type="primary", key="btn_elimina_utente"):
-                    supabase.table("users").delete().eq("username", user_sel).execute()
-                    st.success("Utente eliminato!"); st.rerun()
 
 def page_costi():
     torna_alla_home()
