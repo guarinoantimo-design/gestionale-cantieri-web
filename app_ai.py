@@ -1288,7 +1288,7 @@ def page_stampe():
     except:
         df_cantieri = pd.DataFrame()
 
-    opzioni_cantieri = ["Tutti i cantieri"] + [f"{row['id']} - {row['indirizzo']}" for _, row in df_cantieri.iterrows()] if not df_cantieri.empty else ["Tutti i cantieri"]
+    opzioni_cantieri = [("Tutti", 0)] + [(row['indirizzo'], row['id']) for _, row in df_cantieri.iterrows()] if not df_cantieri.empty else [("Tutti", 0)]
     cant_map = {r['id']: r['indirizzo'] for r in df_cantieri.to_dict('records')} if not df_cantieri.empty else {}
     
     # --- TAB 1: REPORT PER CANTIERE ---
@@ -1301,7 +1301,7 @@ def page_stampe():
             s_data_fin = col_s2.date_input("Periodo Al", value=datetime.date.today(), format="DD/MM/YYYY", key="st_data_fin")
             
             col_s3, col_s4 = st.columns(2)
-            s_cantiere = col_s3.selectbox("Cantiere", opzioni_cantieri, key="st_cantiere")
+            s_cantiere = col_s3.selectbox("Cantiere", opzioni_cantieri, format_func=lambda x: x[0], key="st_cantiere")
             
             try:
                 res_cat = supabase.table("categorie_amministrative").select("nome").execute()
@@ -1329,20 +1329,20 @@ def page_stampe():
                     res_amm = supabase.table("costo_amministrativo").select("*").gte("data", str(s_data_ini)).lte("data", str(s_data_fin)).execute()
                     
                     quota_amm_cantiere = 0.0
-                    if s_cantiere != "Tutti i cantieri":
-                        cid_selezionato = int(s_cantiere.split(" - ")[0])
+                    if s_cantiere[1] != 0:
+                        cid_selezionato = s_cantiere[1]
                         ripartizione = calcola_quote_amministrative(str(s_data_ini), str(s_data_fin), includi_esterne=True)
                         quota_amm_cantiere = ripartizione['quote'].get(cid_selezionato, 0.0)
 
                     if "Operai" in s_tipo or s_tipo == "Tutti":
                         for r in res_man.data:
-                            if s_cantiere != "Tutti i cantieri" and str(r['cantiere_id']) != s_cantiere.split(" - ")[0]: continue
+                            if s_cantiere[1] != 0 and str(r['cantiere_id']) != str(s_cantiere[1]): continue
                             tot_report += float(r['totale'])
                             report_data.append({"Tipo": "Operai", "Data": r['data'], "Cantiere": cant_map.get(r['cantiere_id'], r['cantiere_id']), "Descrizione": f"{r['operaio']} - {r['descrizione']}", "Importo": r['totale']})
 
                     if "Material" in s_tipo or s_tipo == "Tutti":
                         for r in res_mat.data:
-                            if s_cantiere != "Tutti i cantieri" and str(r['cantiere_id']) != s_cantiere.split(" - ")[0]: continue
+                            if s_cantiere[1] != 0 and str(r['cantiere_id']) != str(s_cantiere[1]): continue
                             tot_report += float(r['imponibile'])
                             report_data.append({"Tipo": "Materiale", "Data": r['data'], "Cantiere": cant_map.get(r['cantiere_id'], r['cantiere_id']), "Descrizione": r['fornitore'], "Importo": r['imponibile']})
 
@@ -1355,13 +1355,13 @@ def page_stampe():
                     if cat_da_cercare:
                         for r in res_amm.data:
                             if r['descrizione'] in cat_da_cercare:
-                                if s_cantiere != "Tutti i cantieri":
+                                if s_cantiere[1] != 0:
                                     tot_costi_amm = sum(float(x['importo']) for x in res_amm.data)
                                     if tot_costi_amm > 0 and quota_amm_cantiere > 0:
                                         proporzione_costo = float(r['importo']) / tot_costi_amm
                                         importo_ripartito = proporzione_costo * quota_amm_cantiere
                                         tot_report += importo_ripartito
-                                        report_data.append({"Tipo": r['descrizione'], "Data": r['data'], "Cantiere": s_cantiere.split(" - ")[1], "Descrizione": r['descrizione'], "Importo": importo_ripartito})
+                                        report_data.append({"Tipo": r['descrizione'], "Data": r['data'], "Cantiere": s_cantiere[0], "Descrizione": r['descrizione'], "Importo": importo_ripartito})
                                 else:
                                     tot_report += float(r['importo'])
                                     report_data.append({"Tipo": r['descrizione'], "Data": r['data'], "Cantiere": "Generale", "Descrizione": r['descrizione'], "Importo": r['importo']})
@@ -1381,7 +1381,7 @@ def page_stampe():
                             canvas.saveState()
                             canvas.setFont('Helvetica', 8)
                             canvas.setFillColor(colors.grey)
-                            canvas.drawString(30, 20, f"Cantiere: {s_cantiere} | Tipologia: {s_tipo} | Pagina {doc.page}")
+                            canvas.drawString(30, 20, f"Cantiere: {s_cantiere[0]} | Tipologia: {s_tipo} | Pagina {doc.page}")
                             canvas.restoreState()
 
                         data_rows = [["Tipo", "Data", "Cantiere", "Descrizione", "Importo (€)"]]
@@ -1573,6 +1573,8 @@ def page_stampe():
             p_tipo = col_p3.selectbox("Categoria Pagamento", ["Tutti", "Operai", "Fornitori", "Amministrativi"], key="p_st_tipo")
             
             filtro_specifico = "Tutti"
+            cantiere_filtro = 0
+            
             if p_tipo == "Operai":
                 try:
                     df_op = get_operai()
@@ -1585,6 +1587,9 @@ def page_stampe():
                     lista_forn = ["Tutti i fornitori"] + df_forn['nome'].tolist()
                 except: lista_forn = ["Tutti i fornitori"]
                 filtro_specifico = col_p4.selectbox("Seleziona Fornitore", lista_forn, key="p_st_sel_forn")
+                # Aggiungiamo il filtro Cantiere per i fornitori
+                cantiere_filtro_nome = st.selectbox("Filtra per Cantiere", opzioni_cantieri, format_func=lambda x: x[0], key="p_st_cant_forn")
+                cantiere_filtro = cantiere_filtro_nome[1]
             elif p_tipo == "Amministrativi":
                 try:
                     res_cat = supabase.table("categorie_amministrative").select("nome").execute()
@@ -1594,7 +1599,6 @@ def page_stampe():
 
             if st.button("💸 Genera PDF Pagamenti", type="primary"):
                 try:
-                    # Mappatura nome UI -> nome DB
                     tipo_db = "Tutti"
                     if p_tipo == "Operai": tipo_db = "Operaio"
                     elif p_tipo == "Fornitori": tipo_db = "Fornitore"
@@ -1603,11 +1607,12 @@ def page_stampe():
                     query = supabase.table("pagamenti").select("*").gte("data", str(p_data_ini)).lte("data", str(p_data_fin))
                     if tipo_db != "Tutti":
                         query = query.eq("tipo", tipo_db)
+                    if cantiere_filtro != 0:
+                        query = query.eq("cantiere_id", cantiere_filtro)
                     
                     res = query.execute()
                     df_pag = pd.DataFrame(res.data)
                     
-                    # Filtro per nome specifico (se selezionato)
                     if not df_pag.empty and filtro_specifico not in ["Tutti", "Tutti gli operai", "Tutti i fornitori", "Tutte le categorie"]:
                         df_pag = df_pag[df_pag['riferimento'] == filtro_specifico]
                     
