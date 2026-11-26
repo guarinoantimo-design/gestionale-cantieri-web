@@ -469,26 +469,51 @@ def page_pagamenti():
         if fornitore_sel:
             cantiere_id = cantiere_sel[1] if cantiere_sel[1] != 0 else None
             
-            # Calcolo costi totali (fatture)
-            query_costi = supabase.table("costo_materiali").select("totale").eq("fornitore", fornitore_sel)
+            # --- INIZIO NUOVO BLOCCO: Estratto Conto a scalare ---
+            query_costi = supabase.table("costo_materiali").select("*").eq("fornitore", fornitore_sel)
             if cantiere_id: query_costi = query_costi.eq("cantiere_id", cantiere_id)
             res_costi = query_costi.execute()
-            tot_costi = sum(float(r['totale']) for r in res_costi.data) if res_costi.data else 0.0
             
-            # Calcolo totale pagato
             query_pag = supabase.table("pagamenti").select("importo").eq("tipo", "Fornitore").eq("riferimento", fornitore_sel)
             if cantiere_id: query_pag = query_pag.eq("cantiere_id", cantiere_id)
             res_pag = query_pag.execute()
             tot_pagato = sum(float(r['importo']) for r in res_pag.data) if res_pag.data else 0.0
-            
-            saldo = tot_costi - tot_pagato
-            
-            st.info(f"**Situazione contabile:** Costi totali registrati (fatture): **€ {tot_costi:,.2f}** | Già pagato: **€ {tot_pagato:,.2f}** | **Saldo da pagare: € {saldo:,.2f}**")
+
+            if res_costi.data:
+                df_fatture = pd.DataFrame(res_costi.data).sort_values(by="data")
+                tot_costi = df_fatture['totale'].sum()
+                saldo = tot_costi - tot_pagato
+                
+                st.info(f"**Situazione contabile:** Fatture: **€ {tot_costi:,.2f}** | Già pagato: **€ {tot_pagato:,.2f}** | **Saldo da pagare: € {saldo:,.2f}**")
+                
+                # Logica a scalare per capire lo stato delle singole fatture
+                pagato_residuo = tot_pagato
+                stati = []
+                for index, row in df_fatture.iterrows():
+                    importo_fattura = float(row['totale'])
+                    if pagato_residuo >= importo_fattura:
+                        stati.append("✅ Pagata")
+                        pagato_residuo -= importo_fattura
+                    elif pagato_residuo > 0:
+                        stati.append(f"⚠️ Parziale (Residuo: € {importo_fattura - pagato_residuo:,.2f})")
+                        pagato_residuo = 0
+                    else:
+                        stati.append("❌ Da Pagare")
+                
+                df_fatture['Stato'] = stati
+                df_fatture['Data'] = df_fatture['data'].apply(formatta_data_italiana)
+                
+                with st.expander("🔍 Dettaglio Fatture del Fornitore per questo Cantiere", expanded=True):
+                    st.dataframe(df_fatture[['Data', 'documento', 'imponibile', 'Stato']].rename(columns={
+                        'documento': 'N. Documento', 'imponibile': 'Imponibile (€)'
+                    }), use_container_width=True)
+            else:
+                st.info("Nessuna fattura registrata per questo fornitore/cantiere.")
+            # --- FINE NUOVO BLOCCO ---
 
         with st.form("form_pag_fornitore", clear_on_submit=True):
             col1, col2 = st.columns(2)
             data_p = col1.date_input("Data Pagamento", datetime.date.today(), format="DD/MM/YYYY", key="p_data_forn")
-            # Il fornitore è già scelto sopra, lo mostriamo solo
             st.write(f"Stai pagando: **{fornitore_sel}**")
             
             col3, col4 = st.columns(2)
