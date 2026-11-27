@@ -1333,9 +1333,8 @@ def page_stampe():
     opzioni_cantieri = [("Tutti", 0)] + [(row['indirizzo'], row['id']) for _, row in df_cantieri.iterrows()] if not df_cantieri.empty else [("Tutti", 0)]
     cant_map = {r['id']: r['indirizzo'] for r in df_cantieri.to_dict('records')} if not df_cantieri.empty else {}
     
-    # --- TAB 1: REPORT PER CANTIERE (Esistente) ---
+    # --- TAB 1: REPORT PER CANTIERE ---
     with tab1:
-        # (Codice precedente invariato)
         st.subheader("Genera Report Costi per Cantiere")
         with st.container():
             col_s1, col_s2 = st.columns(2)
@@ -1461,9 +1460,8 @@ def page_stampe():
                         with open(filename, "rb") as f: st.download_button("⬇️ Scarica il PDF Cantiere", data=f, file_name=filename, mime="application/pdf", key="dl_pdf_cantiere")
                 except Exception as e: st.error(f"Errore: {e}")
 
-    # --- TAB 2: REPORT COSTI PER OPERAIO (Esistente) ---
+    # --- TAB 2: REPORT COSTI PER OPERAIO ---
     with tab2:
-        # (Codice precedente invariato)
         st.subheader("Genera Report Costi per Operaio")
         with st.container():
             col_o1, col_o2 = st.columns(2)
@@ -1530,9 +1528,8 @@ def page_stampe():
                         with open(filename, "rb") as f: st.download_button("⬇️ Scarica il PDF Operai", data=f, file_name=filename, mime="application/pdf", key="dl_pdf_operai")
                 except Exception as e: st.error(f"Errore: {e}")
 
-    # --- TAB 3: RIEPILOGO PAGAMENTI (Esistente) ---
+    # --- TAB 3: RIEPILOGO PAGAMENTI ---
     with tab3:
-        # (Codice precedente invariato)
         st.subheader("Genera Report Pagamenti")
         with st.container():
             col_p1, col_p2 = st.columns(2)
@@ -1605,7 +1602,7 @@ def page_stampe():
                         with open(filename, "rb") as f: st.download_button("⬇️ Scarica il PDF Pagamenti", data=f, file_name=filename, mime="application/pdf", key="dl_pdf_pagamenti")
                 except Exception as e: st.error(f"Errore: {e}")
 
-    # --- TAB 4: LIQUIDITA' CANTIERE (Nuovo) ---
+    # --- TAB 4: LIQUIDITA' CANTIERE ---
     with tab4:
         st.subheader("Riepilogo Liquidità per Cantiere")
         st.write("Confronta i costi totali del cantiere con i pagamenti già effettuati per calcolare il saldo.")
@@ -1615,16 +1612,13 @@ def page_stampe():
             l_data_ini = col_l1.date_input("Periodo Dal", value=datetime.date.today().replace(day=1), format="DD/MM/YYYY", key="l_data_ini")
             l_data_fin = col_l2.date_input("Periodo Al", value=datetime.date.today(), format="DD/MM/YYYY", key="l_data_fin")
             
-            # Escludiamo "Tutti" perché la stampa è per singolo cantiere
             l_cantiere_nome = st.selectbox("Seleziona Cantiere", opzioni_cantieri[1:], format_func=lambda x: x[0], key="l_cantiere_sel") 
             
             if st.button("⚖️ Genera PDF Liquidità", type="primary"):
-                if l_cantiere_nome is None:
-                    st.warning("Seleziona un cantiere.")
+                if l_cantiere_nome is None: st.warning("Seleziona un cantiere.")
                 else:
                     cid = l_cantiere_nome[1]
                     
-                    # 1. Calcolo Costi
                     res_man = supabase.table("costo_manodopera").select("totale").eq("cantiere_id", cid).gte("data", str(l_data_ini)).lte("data", str(l_data_fin)).execute()
                     tot_man = sum(float(r['totale']) for r in res_man.data) if res_man.data else 0.0
                     
@@ -1636,30 +1630,23 @@ def page_stampe():
                     
                     tot_costi = tot_man + tot_mat + quota_amm
                     
-                    # 2. Calcolo Pagamenti
                     res_pag = supabase.table("pagamenti").select("importo, tipo").eq("cantiere_id", cid).gte("data", str(l_data_ini)).lte("data", str(l_data_fin)).execute()
                     df_pag = pd.DataFrame(res_pag.data)
                     
-                    tot_pag_man = 0.0
-                    tot_pag_mat = 0.0
-                    tot_pag_amm = 0.0
-                    tot_pag = 0.0
-                    
-                    if not df_pag.empty:
-                        tot_pag_man = df_pag[df_pag['tipo'] == 'Operaio']['importo'].sum()
-                        tot_pag_mat = df_pag[df_pag['tipo'] == 'Fornitore']['importo'].sum()
-                        tot_pag_amm = df_pag[df_pag['tipo'] == 'Amministrativo']['importo'].sum()
-                        tot_pag = df_pag['importo'].sum()
+                    tot_pag_man = df_pag[df_pag['tipo'] == 'Operaio']['importo'].sum() if not df_pag.empty else 0.0
+                    tot_pag_mat = df_pag[df_pag['tipo'] == 'Fornitore']['importo'].sum() if not df_pag.empty else 0.0
+                    tot_pag_amm = df_pag[df_pag['tipo'] == 'Amministrativo']['importo'].sum() if not df_pag.empty else 0.0
+                    tot_pag = df_pag['importo'].sum() if not df_pag.empty else 0.0
                         
                     saldo = tot_costi - tot_pag
                     
-                    # Generazione PDF
                     filename = f"Liquidita_Cantiere_{datetime.date.today()}.pdf"
                     doc = SimpleDocTemplate(filename, pagesize=landscape(A4))
                     elements = []
                     styles = getSampleStyleSheet()
                     style_cell = ParagraphStyle('cell_style', parent=styles['Normal'], fontSize=9, leading=12, alignment=0)
                     style_num = ParagraphStyle('num_style', parent=styles['Normal'], fontSize=9, leading=12, alignment=2)
+                    style_saldo_txt = ParagraphStyle('saldo_txt', parent=styles['Normal'], fontSize=12, leading=14, fontName='Helvetica-Bold')
                     
                     def intestazione_pagina_liq(canvas, doc):
                         canvas.saveState()
@@ -1671,7 +1658,6 @@ def page_stampe():
                     elements.append(Paragraph(f"Riepilogo Liquidità Cantiere: {l_cantiere_nome[0]}", styles['Title']))
                     elements.append(Spacer(1, 12))
                     
-                    # Tabella Costi
                     elements.append(Paragraph("<b>1. Costi Accertati nel Periodo</b>", styles['Heading3']))
                     costi_rows = [
                         ["Costo Manodopera", f"€ {tot_man:,.2f}"],
@@ -1679,7 +1665,7 @@ def page_stampe():
                         ["Quota Costi Amministrativi", f"€ {quota_amm:,.2f}"],
                         ["TOTALE COSTI", f"€ {tot_costi:,.2f}"]
                     ]
-                    t_costi = Table(costi_rows, colWidths=[200, 100])
+                    t_costi = Table(costi_rows, colWidths=[220, 100])
                     t_costi.setStyle(TableStyle([
                         ('ALIGN', (0, 0), (-1, -1), 'LEFT'), ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
                         ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'), ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor("#ECF0F1")),
@@ -1688,7 +1674,6 @@ def page_stampe():
                     elements.append(t_costi)
                     elements.append(Spacer(1, 20))
                     
-                    # Tabella Pagamenti
                     elements.append(Paragraph("<b>2. Pagamenti Effettuati nel Periodo (su questo cantiere)</b>", styles['Heading3']))
                     pag_rows = [
                         ["Pagamenti a Operai", f"€ {tot_pag_man:,.2f}"],
@@ -1696,7 +1681,7 @@ def page_stampe():
                         ["Pagamenti Amministrativi", f"€ {tot_pag_amm:,.2f}"],
                         ["TOTALE PAGATO", f"€ {tot_pag:,.2f}"]
                     ]
-                    t_pag = Table(pag_rows, colWidths=[200, 100])
+                    t_pag = Table(pag_rows, colWidths=[220, 100])
                     t_pag.setStyle(TableStyle([
                         ('ALIGN', (0, 0), (-1, -1), 'LEFT'), ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
                         ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'), ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor("#ECF0F1")),
@@ -1705,14 +1690,13 @@ def page_stampe():
                     elements.append(t_pag)
                     elements.append(Spacer(1, 20))
                     
-                    # Tabella Saldo
                     elements.append(Paragraph("<b>3. Situazione Finale</b>", styles['Heading3']))
                     saldo_color = colors.HexColor("#FADBD8") if saldo > 0 else colors.HexColor("#D5F4E6")
-                    saldo_rows = [["SALDO DA PAGARE (Costi - Pagamenti)", f"€ {saldo:,.2f}"]]
-                    t_saldo = Table(saldo_rows, colWidths=[200, 100])
+                    # FIX IMPAGINAZIONE: Uso Paragraph per andare a capo e allargo la colonna
+                    saldo_rows = [[Paragraph("SALDO DA PAGARE (Costi - Pagamenti)", style_saldo_txt), Paragraph(f"€ {saldo:,.2f}", style_saldo_txt)]]
+                    t_saldo = Table(saldo_rows, colWidths=[260, 70])
                     t_saldo.setStyle(TableStyle([
-                        ('ALIGN', (0, 0), (-1, -1), 'LEFT'), ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
-                        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'), ('FONTSIZE', (0, 0), (-1, -1), 12),
+                        ('ALIGN', (0, 0), (0, 0), 'LEFT'), ('ALIGN', (1, 0), (1, 0), 'RIGHT'), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
                         ('BACKGROUND', (0, 0), (-1, -1), saldo_color),
                         ('GRID', (0, 0), (-1, -1), 1, colors.black),
                         ('TOPPADDING', (0, 0), (-1, -1), 10), ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
