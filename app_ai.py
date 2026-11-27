@@ -9,7 +9,7 @@ import matplotlib.dates as mdates
 import io
 
 # Librerie per il PDF con gestione testo
-from reportlab.lib.pagesizes import A4, landscapeF
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
