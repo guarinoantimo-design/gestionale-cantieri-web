@@ -9,7 +9,7 @@ import matplotlib.dates as mdates
 import io
 
 # Librerie per il PDF con gestione testo
-from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.pagesizes import A4, landscapeF
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -1460,9 +1460,11 @@ def page_stampe():
                         with open(filename, "rb") as f: st.download_button("⬇️ Scarica il PDF Cantiere", data=f, file_name=filename, mime="application/pdf", key="dl_pdf_cantiere")
                 except Exception as e: st.error(f"Errore: {e}")
 
-    # --- TAB 2: REPORT COSTI PER OPERAIO ---
+    # --- TAB 2: REPORT COSTI PER OPERAIO (CON PAGAMENTI E SALDO) ---
     with tab2:
         st.subheader("Genera Report Costi per Operaio")
+        st.write("Questo report mostra il dettaglio delle ore, dei costi, dei pagamenti e del saldo per ogni singolo operaio.")
+        
         with st.container():
             col_o1, col_o2 = st.columns(2)
             o_data_ini = col_o1.date_input("Periodo Dal", value=datetime.date.today().replace(day=1), format="DD/MM/YYYY", key="o_data_ini")
@@ -1471,50 +1473,112 @@ def page_stampe():
             if st.button("👷 Genera PDF per Operaio", type="primary"):
                 try:
                     res_man = supabase.table("costo_manodopera").select("*").gte("data", str(o_data_ini)).lte("data", str(o_data_fin)).execute()
-                    if not res_man.data: st.warning("Nessun costo operaio trovato.")
+                    res_pag = supabase.table("pagamenti").select("*").eq("tipo", "Operaio").gte("data", str(o_data_ini)).lte("data", str(o_data_fin)).execute()
+                    
+                    df_man = pd.DataFrame(res_man.data)
+                    df_pag = pd.DataFrame(res_pag.data)
+
+                    if df_man.empty and df_pag.empty:
+                        st.warning("Nessun costo o pagamento operaio trovato nel periodo selezionato.")
                     else:
-                        df_man = pd.DataFrame(res_man.data)
-                        df_man['CantiereNome'] = df_man['cantiere_id'].apply(lambda x: cant_map.get(x, x))
-                        df_raggruppato = df_man.groupby(['operaio', 'CantiereNome']).agg(Ore_Totali=('ore', 'sum'), Costo_Totale=('totale', 'sum')).reset_index().sort_values(by=['operaio', 'CantiereNome'])
+                        # Prepariamo il DataFrame dei costi
+                        if not df_man.empty:
+                            df_man['cantiere_id'] = df_man['cantiere_id'].apply(lambda x: int(x) if pd.notnull(x) else 0)
+                            df_man['CantiereNome'] = df_man['cantiere_id'].apply(lambda x: cant_map.get(x, "Generale") if x != 0 else "Generale")
+                            df_raggruppato = df_man.groupby(['operaio', 'cantiere_id', 'CantiereNome']).agg(
+                                Ore_Totali=('ore', 'sum'),
+                                Costo_Totale=('totale', 'sum')
+                            ).reset_index()
+                        else:
+                            df_raggruppato = pd.DataFrame(columns=['operaio', 'cantiere_id', 'CantiereNome', 'Ore_Totali', 'Costo_Totale'])
+
+                        # Prepariamo il dizionario dei pagamenti (chiave: operaio + cantiere_id)
+                        pag_dict = {}
+                        if not df_pag.empty:
+                            df_pag['cantiere_id'] = df_pag['cantiere_id'].apply(lambda x: int(x) if pd.notnull(x) else 0)
+                            for _, r in df_pag.iterrows():
+                                key = (r['riferimento'], r['cantiere_id'])
+                                pag_dict[key] = pag_dict.get(key, 0.0) + float(r['importo'])
+
+                        # Se ci sono pagamenti senza costi corrispondenti, aggiungiamo le righe mancanti
+                        existing = set(zip(df_raggruppato['operaio'], df_raggruppato['cantiere_id']))
+                        for (op, cid), pagato in pag_dict.items():
+                            if (op, cid) not in existing:
+                                nome_cant = cant_map.get(cid, "Generale") if cid != 0 else "Generale"
+                                df_raggruppato = pd.concat([df_raggruppato, pd.DataFrame([{'operaio': op, 'cantiere_id': cid, 'CantiereNome': nome_cant, 'Ore_Totali': 0.0, 'Costo_Totale': 0.0}])], ignore_index=True)
+
+                        df_raggruppato = df_raggruppato.sort_values(by=['operaio', 'CantiereNome'])
                         
                         filename = f"Riepilogo_Operai_{datetime.date.today()}.pdf"
                         doc = SimpleDocTemplate(filename, pagesize=landscape(A4))
                         elements = []
                         styles = getSampleStyleSheet()
-                        style_cell = ParagraphStyle('cell_style', parent=styles['Normal'], fontSize=8, leading=10, alignment=0)
-                        style_num = ParagraphStyle('num_style', parent=styles['Normal'], fontSize=8, leading=10, alignment=2)
+                        style_cell = ParagraphStyle('cell_style', parent=styles['Normal'], fontSize=7, leading=9, alignment=0)
+                        style_num = ParagraphStyle('num_style', parent=styles['Normal'], fontSize=7, leading=9, alignment=2)
                         
                         def intestazione_pagina_operaio(canvas, doc):
                             canvas.saveState()
                             canvas.setFont('Helvetica', 8)
                             canvas.setFillColor(colors.grey)
-                            canvas.drawString(30, 20, f"Riepilogo Costi Operai dal {formatta_data_italiana(o_data_ini)} al {formatta_data_italiana(o_data_fin)} | Pagina {doc.page}")
+                            canvas.drawString(30, 20, f"Riepilogo Costi e Pagamenti Operai dal {formatta_data_italiana(o_data_ini)} al {formatta_data_italiana(o_data_fin)} | Pagina {doc.page}")
                             canvas.restoreState()
 
-                        elements.append(Paragraph(f"Riepilogo Costi per Operaio", styles['Title']))
+                        elements.append(Paragraph(f"Riepilogo Costi e Pagamenti per Operaio", styles['Title']))
                         elements.append(Spacer(1, 12))
                         
-                        data_rows = [["Operaio", "Cantiere", "Ore Lavorate", "Costo Totale (€)"]]
-                        grand_total_ore, grand_total_costo = 0.0, 0.0
-                        operaio_corrente, subtotale_ore, subtotale_costo = None, 0.0, 0.0
+                        data_rows = [["Operaio", "Cantiere", "Ore", "Costo (€)", "Pagato (€)", "Saldo (€)"]]
+                        grand_total_ore, grand_total_costo, grand_total_pagato, grand_total_saldo = 0.0, 0.0, 0.0, 0.0
+                        operaio_corrente, subtotale_ore, subtotale_costo, subtotale_pagato, subtotale_saldo = None, 0.0, 0.0, 0.0, 0.0
                         
                         for _, r in df_raggruppato.iterrows():
+                            cid = r['cantiere_id']
+                            pagato = pag_dict.get((r['operaio'], cid), 0.0)
+                            saldo = float(r['Costo_Totale']) - pagato
+
                             if operaio_corrente is not None and r['operaio'] != operaio_corrente:
-                                data_rows.append([f"TOTALE {operaio_corrente.upper()}", "", f"{subtotale_ore:.1f}", f"{subtotale_costo:,.2f}"])
-                                data_rows.append(["", "", "", ""])
-                                subtotale_ore, subtotale_costo = 0.0, 0.0
-                            if r['operaio'] != operaio_corrente: operaio_corrente = r['operaio']
-                            subtotale_ore += float(r['Ore_Totali']); subtotale_costo += float(r['Costo_Totale'])
-                            grand_total_ore += float(r['Ore_Totali']); grand_total_costo += float(r['Costo_Totale'])
-                            data_rows.append([Paragraph(str(r['operaio']), style_cell), Paragraph(str(r['CantiereNome']), style_cell), Paragraph(f"{r['Ore_Totali']:,.1f}", style_num), Paragraph(f"{r['Costo_Totale']:,.2f}", style_num)])
+                                data_rows.append([f"TOTALE {operaio_corrente.upper()}", "", f"{subtotale_ore:.1f}", f"{subtotale_costo:,.2f}", f"{subtotale_pagato:,.2f}", f"{subtotale_saldo:,.2f}"])
+                                data_rows.append(["", "", "", "", "", ""])
+                                subtotale_ore, subtotale_costo, subtotale_pagato, subtotale_saldo = 0.0, 0.0, 0.0, 0.0
+                            
+                            if r['operaio'] != operaio_corrente:
+                                operaio_corrente = r['operaio']
+                            
+                            subtotale_ore += float(r['Ore_Totali'])
+                            subtotale_costo += float(r['Costo_Totale'])
+                            subtotale_pagato += pagato
+                            subtotale_saldo += saldo
+                            
+                            grand_total_ore += float(r['Ore_Totali'])
+                            grand_total_costo += float(r['Costo_Totale'])
+                            grand_total_pagato += pagato
+                            grand_total_saldo += saldo
+                            
+                            data_rows.append([
+                                Paragraph(str(r['operaio']), style_cell),
+                                Paragraph(str(r['CantiereNome']), style_cell),
+                                Paragraph(f"{r['Ore_Totali']:,.1f}", style_num),
+                                Paragraph(f"{r['Costo_Totale']:,.2f}", style_num),
+                                Paragraph(f"{pagato:,.2f}", style_num),
+                                Paragraph(f"{saldo:,.2f}", style_num)
+                            ])
                         
                         if operaio_corrente is not None:
-                            data_rows.append([f"TOTALE {operaio_corrente.upper()}", "", f"{subtotale_ore:.1f}", f"{subtotale_costo:,.2f}"])
-                            data_rows.append(["", "", "", ""])
-                        data_rows.append(["TOTALE GENERALE ASSOLUTO", "", f"{grand_total_ore:.1f}", f"{grand_total_costo:,.2f}"])
+                            data_rows.append([f"TOTALE {operaio_corrente.upper()}", "", f"{subtotale_ore:.1f}", f"{subtotale_costo:,.2f}", f"{subtotale_pagato:,.2f}", f"{subtotale_saldo:,.2f}"])
+                            data_rows.append(["", "", "", "", "", ""])
                         
-                        t = Table(data_rows, colWidths=[160, 200, 100, 120], repeatRows=1)
-                        style_cmds = [('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke), ('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'), ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#BDC3C7"))]
+                        data_rows.append(["TOTALE GENERALE ASSOLUTO", "", f"{grand_total_ore:.1f}", f"{grand_total_costo:,.2f}", f"{grand_total_pagato:,.2f}", f"{grand_total_saldo:,.2f}"])
+                        
+                        # ColWidths aggiornati per far stare tutti i dati senza sbordare
+                        t = Table(data_rows, colWidths=[110, 140, 45, 80, 80, 80], repeatRows=1)
+                        style_cmds = [
+                            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
+                            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                            ('FONTSIZE', (0, 0), (-1, 0), 8),
+                            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#BDC3C7")),
+                        ]
                         for i, row in enumerate(data_rows):
                             if str(row[0]).startswith("TOTALE") and row[0] != "TOTALE GENERALE ASSOLUTO":
                                 style_cmds.append(('BACKGROUND', (0, i), (-1, i), colors.HexColor("#EAECEE")))
@@ -1522,11 +1586,16 @@ def page_stampe():
                             elif row[0] == "TOTALE GENERALE ASSOLUTO":
                                 style_cmds.append(('BACKGROUND', (0, i), (-1, i), colors.HexColor("#D5F4E6")))
                                 style_cmds.append(('FONTNAME', (0, i), (-1, i), 'Helvetica-Bold'))
-                        t.setStyle(TableStyle(style_cmds)); elements.append(t)
+
+                        t.setStyle(TableStyle(style_cmds))
+                        elements.append(t)
+                        
                         doc.build(elements, onFirstPage=intestazione_pagina_operaio, onLaterPages=intestazione_pagina_operaio)
-                        st.success(f"PDF generato!")
+                        st.success(f"PDF generato con successo!")
                         with open(filename, "rb") as f: st.download_button("⬇️ Scarica il PDF Operai", data=f, file_name=filename, mime="application/pdf", key="dl_pdf_operai")
-                except Exception as e: st.error(f"Errore: {e}")
+
+                except Exception as e:
+                    st.error(f"Errore generazione report operai: {e}")
 
     # --- TAB 3: RIEPILOGO PAGAMENTI ---
     with tab3:
@@ -1646,7 +1715,6 @@ def page_stampe():
                     styles = getSampleStyleSheet()
                     style_cell = ParagraphStyle('cell_style', parent=styles['Normal'], fontSize=9, leading=12, alignment=0)
                     style_num = ParagraphStyle('num_style', parent=styles['Normal'], fontSize=9, leading=12, alignment=2)
-                    style_saldo_txt = ParagraphStyle('saldo_txt', parent=styles['Normal'], fontSize=12, leading=14, fontName='Helvetica-Bold')
                     
                     def intestazione_pagina_liq(canvas, doc):
                         canvas.saveState()
@@ -1692,17 +1760,11 @@ def page_stampe():
                     
                     elements.append(Paragraph("<b>3. Situazione Finale</b>", styles['Heading3']))
                     saldo_color = colors.HexColor("#FADBD8") if saldo > 0 else colors.HexColor("#D5F4E6")
-                    
-                    # Creiamo uno stile apposito per il numero, allineato a destra
                     style_saldo_num = ParagraphStyle('saldo_num', parent=styles['Normal'], fontSize=12, leading=14, fontName='Helvetica-Bold', alignment=2)
-                    # Lo stile per il testo, allineato a sinistra
                     style_saldo_txt = ParagraphStyle('saldo_txt', parent=styles['Normal'], fontSize=12, leading=14, fontName='Helvetica-Bold', alignment=0)
                     
-                    saldo_rows = [
-                        [Paragraph("SALDO DA PAGARE (Costi - Pagamenti)", style_saldo_txt), Paragraph(f"€ {saldo:,.2f}", style_saldo_num)]
-                    ]
-                    # Largh. Totale 330 (200 per il testo, 130 per il numero così non va a capo)
-                    t_saldo = Table(saldo_rows, colWidths=[200, 130])
+                    saldo_rows = [[Paragraph("SALDO DA PAGARE (Costi - Pagamenti)", style_saldo_txt), Paragraph(f"€ {saldo:,.2f}", style_saldo_num)]]
+                    t_saldo = Table(saldo_rows, colWidths=[200, 120])
                     t_saldo.setStyle(TableStyle([
                         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
                         ('BACKGROUND', (0, 0), (-1, -1), saldo_color),
