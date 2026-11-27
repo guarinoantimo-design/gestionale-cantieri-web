@@ -1589,7 +1589,7 @@ def page_stampe():
                         if o_filtro_operaio == "Tutti gli operai":
                             data_rows.append(["TOTALE GENERALE ASSOLUTO", "", f"{grand_total_ore:.1f}", f"{grand_total_costo:,.2f}", f"{grand_total_pagato:,.2f}", f"{grand_total_saldo:,.2f}"])
                         
-                        t = Table(data_rows, colWidths=[110, 140, 45, 80, 80, 80], repeatRows=1)
+                        t = Table(data_rows, colWidths=[200, 170, 50, 80, 80, 80], repeatRows=1)
                         style_cmds = [
                             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
                             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
