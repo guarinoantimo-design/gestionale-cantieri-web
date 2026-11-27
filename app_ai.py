@@ -1692,11 +1692,19 @@ def page_stampe():
                     
                     elements.append(Paragraph("<b>3. Situazione Finale</b>", styles['Heading3']))
                     saldo_color = colors.HexColor("#FADBD8") if saldo > 0 else colors.HexColor("#D5F4E6")
-                    # FIX IMPAGINAZIONE: Uso Paragraph per andare a capo e allargo la colonna
-                    saldo_rows = [[Paragraph("SALDO DA PAGARE (Costi - Pagamenti)", style_saldo_txt), Paragraph(f"€ {saldo:,.2f}", style_saldo_txt)]]
-                    t_saldo = Table(saldo_rows, colWidths=[260, 70])
+                    
+                    # Creiamo uno stile apposito per il numero, allineato a destra
+                    style_saldo_num = ParagraphStyle('saldo_num', parent=styles['Normal'], fontSize=12, leading=14, fontName='Helvetica-Bold', alignment=2)
+                    # Lo stile per il testo, allineato a sinistra
+                    style_saldo_txt = ParagraphStyle('saldo_txt', parent=styles['Normal'], fontSize=12, leading=14, fontName='Helvetica-Bold', alignment=0)
+                    
+                    saldo_rows = [
+                        [Paragraph("SALDO DA PAGARE (Costi - Pagamenti)", style_saldo_txt), Paragraph(f"€ {saldo:,.2f}", style_saldo_num)]
+                    ]
+                    # Largh. Totale 330 (200 per il testo, 130 per il numero così non va a capo)
+                    t_saldo = Table(saldo_rows, colWidths=[200, 130])
                     t_saldo.setStyle(TableStyle([
-                        ('ALIGN', (0, 0), (0, 0), 'LEFT'), ('ALIGN', (1, 0), (1, 0), 'RIGHT'), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
                         ('BACKGROUND', (0, 0), (-1, -1), saldo_color),
                         ('GRID', (0, 0), (-1, -1), 1, colors.black),
                         ('TOPPADDING', (0, 0), (-1, -1), 10), ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
