@@ -1460,7 +1460,7 @@ def page_stampe():
                         with open(filename, "rb") as f: st.download_button("⬇️ Scarica il PDF Cantiere", data=f, file_name=filename, mime="application/pdf", key="dl_pdf_cantiere")
                 except Exception as e: st.error(f"Errore: {e}")
 
-    # --- TAB 2: REPORT COSTI PER OPERAIO (CON PAGAMENTI E SALDO) ---
+       # --- TAB 2: REPORT COSTI PER OPERAIO (CON PAGAMENTI E SALDO) ---
     with tab2:
         st.subheader("Genera Report Costi per Operaio")
         st.write("Questo report mostra il dettaglio delle ore, dei costi, dei pagamenti e del saldo per ogni singolo operaio.")
@@ -1470,10 +1470,28 @@ def page_stampe():
             o_data_ini = col_o1.date_input("Periodo Dal", value=datetime.date.today().replace(day=1), format="DD/MM/YYYY", key="o_data_ini")
             o_data_fin = col_o2.date_input("Periodo Al", value=datetime.date.today(), format="DD/MM/YYYY", key="o_data_fin")
             
+            # NUOVO MENU A TENDINA PER L'OPERAIO
+            try:
+                df_op_list = get_operai()
+                opzioni_operai = ["Tutti gli operai"] + df_op_list['nome'].tolist()
+            except:
+                opzioni_operai = ["Tutti gli operai"]
+            
+            o_filtro_operaio = st.selectbox("Seleziona Operaio", opzioni_operai, key="o_filtro_operaio")
+            
             if st.button("👷 Genera PDF per Operaio", type="primary"):
                 try:
-                    res_man = supabase.table("costo_manodopera").select("*").gte("data", str(o_data_ini)).lte("data", str(o_data_fin)).execute()
-                    res_pag = supabase.table("pagamenti").select("*").eq("tipo", "Operaio").gte("data", str(o_data_ini)).lte("data", str(o_data_fin)).execute()
+                    # Filtriamo i costi
+                    query_man = supabase.table("costo_manodopera").select("*").gte("data", str(o_data_ini)).lte("data", str(o_data_fin))
+                    if o_filtro_operaio != "Tutti gli operai":
+                        query_man = query_man.eq("operaio", o_filtro_operaio)
+                    res_man = query_man.execute()
+                    
+                    # Filtriamo i pagamenti
+                    query_pag = supabase.table("pagamenti").select("*").eq("tipo", "Operaio").gte("data", str(o_data_ini)).lte("data", str(o_data_fin))
+                    if o_filtro_operaio != "Tutti gli operai":
+                        query_pag = query_pag.eq("riferimento", o_filtro_operaio)
+                    res_pag = query_pag.execute()
                     
                     df_man = pd.DataFrame(res_man.data)
                     df_pag = pd.DataFrame(res_pag.data)
@@ -1520,10 +1538,11 @@ def page_stampe():
                             canvas.saveState()
                             canvas.setFont('Helvetica', 8)
                             canvas.setFillColor(colors.grey)
-                            canvas.drawString(30, 20, f"Riepilogo Costi e Pagamenti Operai dal {formatta_data_italiana(o_data_ini)} al {formatta_data_italiana(o_data_fin)} | Pagina {doc.page}")
+                            canvas.drawString(30, 20, f"Riepilogo Costi e Pagamenti Operai dal {formatta_data_italiana(o_data_ini)} al {formatta_data_italiana(o_data_fin)} | {o_filtro_operaio} | Pagina {doc.page}")
                             canvas.restoreState()
 
                         elements.append(Paragraph(f"Riepilogo Costi e Pagamenti per Operaio", styles['Title']))
+                        elements.append(Paragraph(f"<b>Filtro:</b> {o_filtro_operaio}", styles['Normal']))
                         elements.append(Spacer(1, 12))
                         
                         data_rows = [["Operaio", "Cantiere", "Ore", "Costo (€)", "Pagato (€)", "Saldo (€)"]]
@@ -1566,9 +1585,10 @@ def page_stampe():
                             data_rows.append([f"TOTALE {operaio_corrente.upper()}", "", f"{subtotale_ore:.1f}", f"{subtotale_costo:,.2f}", f"{subtotale_pagato:,.2f}", f"{subtotale_saldo:,.2f}"])
                             data_rows.append(["", "", "", "", "", ""])
                         
-                        data_rows.append(["TOTALE GENERALE ASSOLUTO", "", f"{grand_total_ore:.1f}", f"{grand_total_costo:,.2f}", f"{grand_total_pagato:,.2f}", f"{grand_total_saldo:,.2f}"])
+                        # Se stiamo stampando un solo operaio, evitiamo di stampare un "TOTALE GENERALE ASSOLUTO" ridondante
+                        if o_filtro_operaio == "Tutti gli operai":
+                            data_rows.append(["TOTALE GENERALE ASSOLUTO", "", f"{grand_total_ore:.1f}", f"{grand_total_costo:,.2f}", f"{grand_total_pagato:,.2f}", f"{grand_total_saldo:,.2f}"])
                         
-                        # ColWidths aggiornati per far stare tutti i dati senza sbordare
                         t = Table(data_rows, colWidths=[110, 140, 45, 80, 80, 80], repeatRows=1)
                         style_cmds = [
                             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
